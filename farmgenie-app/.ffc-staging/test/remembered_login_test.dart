@@ -114,6 +114,18 @@ void main() {
           }),
         );
         expect(loggedIn, success);
+        if (!success) {
+          expect(find.byType(AlertDialog), findsOneWidget);
+          expect(find.text('Warning'), findsOneWidget);
+          final message =
+              tester.widget<AlertDialog>(find.byType(AlertDialog)).content!
+                  as Text;
+          expect(find.text(message.data!), findsOneWidget);
+          await tester.tap(find.text('OK'));
+          await tester.pumpAndSettle();
+          expect(find.byType(AlertDialog), findsNothing);
+          expect(find.text(message.data!), findsNothing);
+        }
         final saved = await RememberedLoginStore().read();
         expect(saved.username, success ? 'employee' : '');
         expect(saved.password, success ? ' secret ' : '');

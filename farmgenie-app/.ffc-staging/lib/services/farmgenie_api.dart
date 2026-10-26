@@ -505,6 +505,75 @@ class FarmgenieApi {
     return {'ok': true, 'data': data};
   }
 
+  static String _leaveError(http.Response response) {
+    final decoded = _json(response);
+    if (decoded['exc_type'] == 'CSRFTokenError') {
+      return 'Your ERP security token expired. Please sign in again and retry.';
+    }
+    try {
+      final raw = decoded['_server_messages'];
+      final messages = raw is String ? jsonDecode(raw) : raw;
+      if (messages is List) {
+        for (final entry in messages) {
+          final value = entry is String ? jsonDecode(entry) : entry;
+          if (value is Map && value['message'] is String) {
+            final message = (value['message'] as String)
+                .replaceAll(RegExp(r'<[^>]*>'), '')
+                .trim();
+            if (message.isNotEmpty) return _friendlyError(message);
+          }
+        }
+      }
+    } catch (_) {}
+    return _error(response);
+  }
+
+  static Future<String> _leaveCsrfToken(http.Client client, String sid) async {
+    final site = Uri.parse(baseUrl);
+    var uri = site.resolve('/app');
+    for (var redirects = 0; redirects <= 3; redirects++) {
+      final request = http.Request('GET', uri)
+        ..followRedirects = false
+        ..headers.addAll({
+          ..._headers(sid),
+          'Accept': 'text/html',
+          'Cache-Control': 'no-cache, no-store',
+        });
+      final response = await (() async {
+        return http.Response.fromStream(await client.send(request));
+      })().timeout(const Duration(seconds: 15));
+      if ({301, 302, 303, 307, 308}.contains(response.statusCode)) {
+        final location = response.headers['location'];
+        if (location == null || location.isEmpty) break;
+        final next = uri.resolve(location);
+        if (next.origin != site.origin || next.userInfo.isNotEmpty) {
+          throw const FarmgenieApiException(
+            'ERP redirected to a different site. Check the ERP site URL.',
+          );
+        }
+        uri = next;
+        continue;
+      }
+      if (response.statusCode != 200) {
+        throw FarmgenieApiException(_leaveError(response));
+      }
+      final match = RegExp(r'''frappe\.csrf_token\s*=\s*["']([^"']+)["']''')
+          .firstMatch(response.body);
+      final token = match?.group(1)?.trim();
+      if (token != null &&
+          token.isNotEmpty &&
+          token != 'None' &&
+          token != 'null') {
+        return token;
+      }
+      break;
+    }
+    throw const FarmgenieApiException(
+      'ERP could not initialize the leave security token. '
+      'Please sign in again. If this continues, check ERP Desk access.',
+    );
+  }
+
   static Future<Map<String, dynamic>> createLeaveRequest({
     required String fromDate,
     required String toDate,
@@ -516,23 +585,46 @@ class FarmgenieApi {
     required String leaveApprover,
   }) async {
     final sid = await _sid();
-    final response = await http
-        .post(
-          Uri.parse(baseUrl + leaveRequestPath),
-          headers: _headers(sid),
-          body: {
-            'from_date': fromDate,
-            'to_date': toDate,
-            'half_day': halfDay ? '1' : '0',
-            'leave_type': leaveType,
-            'description': description,
-            'employee': employee,
-            'company': company,
-            'leave_approver': leaveApprover,
-          },
-        )
-        .timeout(const Duration(seconds: 15));
-    return _message(response);
+    if (sid == null || sid.isEmpty) {
+      throw const FarmgenieApiException(
+        'Your session expired. Please log in again.',
+      );
+    }
+    final client = http.Client();
+    try {
+      final csrfToken = await _leaveCsrfToken(client, sid);
+      if (await _sid() != sid) {
+        throw const FarmgenieApiException(
+          'Your account changed. Please reopen the leave request.',
+        );
+      }
+      final request =
+          http.Request('POST', Uri.parse(baseUrl + leaveRequestPath))
+            ..followRedirects = false
+            ..headers.addAll({
+              ..._headers(sid),
+              'X-Frappe-CSRF-Token': csrfToken,
+            })
+            ..bodyFields = {
+              'from_date': fromDate,
+              'to_date': toDate,
+              'half_day': halfDay ? '1' : '0',
+              'leave_type': leaveType,
+              'description': description,
+              'employee': employee,
+              'company': company,
+              'leave_approver': leaveApprover,
+            };
+      final response = await (() async {
+        return http.Response.fromStream(await client.send(request));
+      })().timeout(const Duration(seconds: 15));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw FarmgenieApiException(_leaveError(response));
+      }
+      return _message(response);
+    } finally {
+      client.close();
+    }
   }
 
   static Future<Map<String, dynamic>> createMaterialRequest({

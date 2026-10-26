@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/warning_popup.dart';
 import '../services/farmgenie_api.dart';
 import '../widgets/employee_avatar.dart';
 import '../widgets/glass_home.dart';
@@ -10,11 +11,10 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen> with WarningPopupState {
   Map<String, dynamic> _data = {};
   String _username = '';
   bool _loading = true;
-  String? _error;
   @override
   void initState() {
     super.initState();
@@ -24,7 +24,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _load() async {
     setState(() {
       _loading = true;
-      _error = null;
+      warningMessage = null;
     });
     try {
       final username = await FarmgenieApi.currentUser() ?? '';
@@ -35,8 +35,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _data = Map<String, dynamic>.from(response['data'] as Map? ?? {});
       });
     } catch (_) {
-      if (mounted)
-        setState(() => _error = 'Could not load your profile. Please retry.');
+      if (mounted) {
+        setState(
+          () => warningMessage = 'Could not load your profile. Please retry.',
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -76,12 +79,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _error != null
+          : warningMessage != null
           ? Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(_error!),
                   TextButton(onPressed: _load, child: const Text('Retry')),
                 ],
               ),

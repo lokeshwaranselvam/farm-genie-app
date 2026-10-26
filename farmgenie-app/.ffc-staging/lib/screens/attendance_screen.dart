@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
+
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../widgets/warning_popup.dart';
 import '../services/farmgenie_api.dart';
 import '../utils/face/face_auth_flow.dart';
 import '../utils/api/face_auth_api.dart';
 import '../services/attendance_geofence.dart';
 import '../widgets/checkin_design.dart';
 import '../widgets/glass_home.dart';
-import '../widgets/geofence_warning_dialog.dart';
 
 class AttendanceScreen extends StatefulWidget {
   const AttendanceScreen({super.key, this.recordsOnly = false});
@@ -19,7 +20,8 @@ class AttendanceScreen extends StatefulWidget {
   State<AttendanceScreen> createState() => _AttendanceScreenState();
 }
 
-class _AttendanceScreenState extends State<AttendanceScreen> {
+class _AttendanceScreenState extends State<AttendanceScreen>
+    with WarningPopupState {
   static const _officeTypes = [
     'Head Office - Alapakkam',
     'Head Office - RWD GrandCorridor',
@@ -42,7 +44,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   bool _workCompleted = false;
   String? _checkInTime;
   String? _checkOutTime;
-  String? _error;
   String? _officeType;
   Position? _lastPosition;
   String? _locationAddress;
@@ -68,6 +69,18 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       '${date.month.toString().padLeft(2, '0')}-'
       '${date.day.toString().padLeft(2, '0')}';
 
+  bool get _previousDayCheckout {
+    if (!_checkedIn) return false;
+    final checkIn = DateTime.tryParse(_checkInTime ?? '')?.toLocal();
+    if (checkIn == null) return false;
+    final now = DateTime.now();
+    return DateTime(
+      checkIn.year,
+      checkIn.month,
+      checkIn.day,
+    ).isBefore(DateTime(now.year, now.month, now.day));
+  }
+
   Future<void> _loadCalendar() async {
     if (mounted) setState(() => _calendarLoading = true);
     try {
@@ -80,10 +93,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         };
       });
     } on FarmgenieApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) setState(() => warningMessage = error.message);
     } catch (_) {
-      if (mounted)
-        setState(() => _error = 'Could not load attendance records.');
+      if (mounted) {
+        setState(() => warningMessage = 'Could not load attendance records.');
+      }
     } finally {
       if (mounted) setState(() => _calendarLoading = false);
     }
@@ -105,7 +119,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     setState(() {
       _locationLoading = true;
       _lastPosition = null;
-      _error = null;
+      warningMessage = null;
     });
     try {
       final position = await _position();
@@ -139,10 +153,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             : parts.join(', ');
       });
     } on FarmgenieApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) setState(() => warningMessage = error.message);
     } catch (_) {
       if (mounted) {
-        setState(() => _error = 'Could not read your current location.');
+        setState(
+          () => warningMessage = 'Could not read your current location.',
+        );
       }
     } finally {
       if (mounted) setState(() => _locationLoading = false);
@@ -152,15 +168,17 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   Future<void> _loadStatus() async {
     setState(() {
       _loading = true;
-      _error = null;
+      warningMessage = null;
     });
     try {
       final response = await FarmgenieApi.attendanceStatus();
       _applyStatus(response['data']);
     } on FarmgenieApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) setState(() => warningMessage = error.message);
     } catch (_) {
-      if (mounted) setState(() => _error = 'Could not load attendance status.');
+      if (mounted) {
+        setState(() => warningMessage = 'Could not load attendance status.');
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -241,20 +259,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     }
   }
 
-  Future<void> _showLocationWarning(String message) async {
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => GeofenceWarningDialog(message: message),
-    );
-  }
-
   Future<void> _attendanceAction() async {
     if (_actionLoading || _loading) return;
     setState(() {
       _actionLoading = true;
-      _error = null;
+      warningMessage = null;
     });
     try {
       // Refresh authenticated attendance and exemption before making a decision.
@@ -292,7 +301,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           await _refreshLocation();
           if (!mounted || _lastPosition == null) {
             throw FarmgenieApiException(
-              _error ?? 'Could not read your current location.',
+              warningMessage ?? 'Could not read your current location.',
             );
           }
           _validateGeofence(selectedOffice, _lastPosition!);
@@ -319,31 +328,13 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _applyStatus(response['data']);
       if (mounted) await _showSuccess();
     } on FarmgenieApiException catch (error) {
-      if (GeofenceWarningDialog.matchesMessage(error.message)) {
-        if (mounted) setState(() => _error = null);
-        await _showLocationWarning(error.message);
-      } else {
-        if (mounted) setState(() => _error = error.message);
-      }
+      if (mounted) setState(() => warningMessage = error.message);
     } on StateError catch (error) {
-      if (mounted) {
-        setState(() => _error = error.message.toString());
-        await showDialog<void>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Face verification required'),
-            content: Text(error.message.toString()),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-      }
+      if (mounted) setState(() => warningMessage = error.message.toString());
     } catch (_) {
-      if (mounted) setState(() => _error = 'Attendance request failed.');
+      if (mounted) {
+        setState(() => warningMessage = 'Attendance request failed.');
+      }
     } finally {
       if (mounted) setState(() => _actionLoading = false);
     }
@@ -897,7 +888,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               label: _workCompleted
                   ? 'Work Completed'
                   : _checkedIn
-                  ? 'Check Out'
+                  ? _previousDayCheckout
+                        ? 'Previous Day Check Out'
+                        : 'Check Out'
                   : 'Check In',
               completed: _workCompleted,
               checkout: _checkedIn,
@@ -916,10 +909,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   ? null
                   : _refreshLocation,
             ),
-          ],
-          if (_error != null) ...[
-            const SizedBox(height: 14),
-            Text(_error!, style: const TextStyle(color: Colors.red)),
           ],
         ],
       ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/warning_popup.dart';
 import '../utils/api/face_auth_api.dart';
 import '../utils/face/face_auth_flow.dart';
 import '../widgets/glass_home.dart';
@@ -30,10 +31,10 @@ class FaceEnrollmentGate extends StatefulWidget {
   State<FaceEnrollmentGate> createState() => _FaceEnrollmentGateState();
 }
 
-class _FaceEnrollmentGateState extends State<FaceEnrollmentGate> {
+class _FaceEnrollmentGateState extends State<FaceEnrollmentGate>
+    with WarningPopupState {
   bool _busy = true;
   bool _ready = false;
-  String? _error;
   FaceEnrollmentStatus? _status;
 
   @override
@@ -46,7 +47,7 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate> {
     if (!mounted) return;
     setState(() {
       _busy = true;
-      _error = null;
+      warningMessage = null;
     });
     try {
       final status = await (widget.loadStatus ?? FaceAuthApi.instance.status)();
@@ -64,7 +65,7 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate> {
     } catch (error) {
       if (mounted) {
         setState(() {
-          _error = error.toString();
+          warningMessage = error.toString();
           _busy = false;
         });
       }
@@ -81,7 +82,9 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate> {
       _busy = false;
       _ready = result?.enrolled == true;
       _status = result ?? status;
-      _error = _ready ? null : 'Take your first-login selfie to finish setup.';
+      warningMessage = _ready
+          ? null
+          : 'Take your first-login selfie to finish setup.';
     });
     if (_ready) widget.onReady?.call();
   }
@@ -99,7 +102,9 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate> {
     try {
       await widget.onSignOut().timeout(const Duration(seconds: 15));
     } catch (error) {
-      if (mounted) setState(() => _error = 'Could not sign out. Please retry.');
+      if (mounted) {
+        setState(() => warningMessage = 'Could not sign out. Please retry.');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -164,15 +169,6 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate> {
                     if (_busy)
                       const CircularProgressIndicator(color: Color(0xFF075C3D))
                     else ...[
-                      if (_error != null)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 20),
-                          child: Text(
-                            _error!,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(color: Color(0xFFB3261E)),
-                          ),
-                        ),
                       SizedBox(
                         width: double.infinity,
                         height: 50,

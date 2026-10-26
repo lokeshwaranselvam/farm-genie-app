@@ -5,11 +5,13 @@ import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:permission_handler/permission_handler.dart';
 
+import '../widgets/warning_popup.dart';
 import '../utils/face/face_blink_controller.dart';
 import '../utils/face/face_image_quality.dart';
 import '../utils/face/face_performance_trace.dart';
@@ -197,7 +199,12 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         }
         final before = _blink.progress.stage;
         _blink.tick(_clock.elapsed);
-        if (_blink.progress.stage != before) setState(() {});
+        if (_blink.progress.stage != before) {
+          setState(() {});
+          if (_blink.progress.needsRetry) {
+            WarningPopup.show(context, _blink.progress.instruction);
+          }
+        }
       });
     } on CameraException catch (error) {
       if (!_validSession(session)) return;
@@ -276,6 +283,9 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       if (previousProgress.stage != progress.stage ||
           previousProgress.instruction != progress.instruction) {
         setState(() {});
+      }
+      if (progress.needsRetry && !previousProgress.needsRetry && mounted) {
+        WarningPopup.show(context, progress.instruction);
       }
       if (progress.canCapture) await _captureSelfie(session);
     } catch (_) {
@@ -397,6 +407,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       }
       if (error != null) {
         setState(() => _retryMessage = error);
+        if (mounted) WarningPopup.show(context, error);
       } else {
         if (!mounted) return;
         accepted = true;
@@ -409,6 +420,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
           () =>
               _retryMessage = 'Could not verify this selfie. Please try again.',
         );
+        if (mounted) WarningPopup.show(context, _retryMessage!);
       }
     } finally {
       if (!accepted && photo != null) {
@@ -430,6 +442,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       _starting = false;
       _error = error;
     });
+    WarningPopup.show(context, error);
   }
 
   Future<void> _retry() async {
@@ -510,15 +523,16 @@ class _FaceCapturePageState extends State<FaceCapturePage>
                     size: 30,
                   ),
                   const SizedBox(height: 10),
-                  Text(
-                    message,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      height: 1.4,
+                  if (!needsRetry)
+                    Text(
+                      message,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        height: 1.4,
+                      ),
                     ),
-                  ),
                   const SizedBox(height: 8),
                   const Text(
                     'The camera takes your selfie automatically after you blink.',

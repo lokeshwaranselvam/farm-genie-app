@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
 import 'package:http/http.dart' as http;
 
+import '../widgets/warning_popup.dart';
 import '../services/farmgenie_api.dart';
 import '../services/remembered_login_store.dart';
 import '../widgets/glass_home.dart';
@@ -16,7 +18,7 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen> with WarningPopupState {
   final _formKey = GlobalKey<FormState>();
   final _username = TextEditingController();
   final _password = TextEditingController();
@@ -26,7 +28,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
   bool _obscure = true;
   bool _rememberMe = true;
-  String? _error;
 
   @override
   void initState() {
@@ -60,7 +61,9 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) setState(() => _rememberMe = remember);
     } catch (_) {
       if (mounted) {
-        setState(() => _error = 'Could not update Remember me. Try again.');
+        setState(
+          () => warningMessage = 'Could not update Remember me. Try again.',
+        );
       }
     } finally {
       if (mounted) setState(() => _savingPreference = false);
@@ -76,12 +79,21 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _login() async {
     if (_loading || _restoringLogin || _savingPreference) return;
-    if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate()) {
+      WarningPopup.show(
+        context,
+        [
+          if (_username.text.trim().isEmpty) 'Username is required',
+          if (_password.text.isEmpty) 'Password is required',
+        ].join('\n'),
+      );
+      return;
+    }
     final username = _username.text.trim();
     final password = _password.text;
     setState(() {
       _loading = true;
-      _error = null;
+      warningMessage = null;
     });
     try {
       await FarmgenieApi.login(username, password);
@@ -93,24 +105,23 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       } catch (_) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Signed in, but could not save login details.'),
-            ),
+          await WarningPopup.show(
+            context,
+            'Signed in, but could not save login details.',
           );
         }
       }
       if (mounted) widget.onLoggedIn();
     } on FarmgenieApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) setState(() => warningMessage = error.message);
     } on http.ClientException {
-      if (mounted) setState(() => _error = 'No internet connection.');
+      if (mounted) setState(() => warningMessage = 'No internet connection.');
     } on TimeoutException {
       if (mounted) {
-        setState(() => _error = 'ERP is taking too long. Try again.');
+        setState(() => warningMessage = 'ERP is taking too long. Try again.');
       }
     } catch (_) {
-      if (mounted) setState(() => _error = 'Could not connect to ERP.');
+      if (mounted) setState(() => warningMessage = 'Could not connect to ERP.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -169,6 +180,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               label: 'ERP username or email',
                               icon: Icons.person_outline,
                             ),
+                            errorBuilder: (context, error) =>
+                                const SizedBox.shrink(),
                             validator: (value) =>
                                 value == null || value.trim().isEmpty
                                 ? 'Username is required'
@@ -195,6 +208,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                     ),
                                   ),
                                 ),
+                            errorBuilder: (context, error) =>
+                                const SizedBox.shrink(),
                             validator: (value) => value == null || value.isEmpty
                                 ? 'Password is required'
                                 : null,
@@ -226,14 +241,10 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const Spacer(),
                               TextButton(
-                                onPressed: () => ScaffoldMessenger.of(context)
-                                    .showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Contact your ERP administrator to reset your password.',
-                                        ),
-                                      ),
-                                    ),
+                                onPressed: () => WarningPopup.show(
+                                  context,
+                                  'Contact your ERP administrator to reset your password.',
+                                ),
                                 style: TextButton.styleFrom(
                                   foregroundColor: const Color(0xFF27733D),
                                   padding: EdgeInsets.zero,
@@ -246,14 +257,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ],
                           ),
-                          if (_error != null) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              _error!,
-                              style: const TextStyle(color: Color(0xFFC62828)),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
                           const SizedBox(height: 14),
                           DecoratedBox(
                             decoration: BoxDecoration(

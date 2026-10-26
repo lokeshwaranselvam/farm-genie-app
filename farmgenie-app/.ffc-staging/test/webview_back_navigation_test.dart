@@ -77,16 +77,19 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
+      await dismissWarnings(tester);
 
       for (final title in ['Material Request', 'Sales Dashboard']) {
         await tester.tap(find.byTooltip('Open navigation menu'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 400));
+        await dismissWarnings(tester);
         await tester.tap(
           find.descendant(of: find.byType(Drawer), matching: find.text(title)),
         );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 400));
+        await dismissWarnings(tester);
         expect(find.byTooltip('Back'), findsOneWidget);
         expect(find.byType(DrawerButton), findsNothing);
 
@@ -98,6 +101,7 @@ void main() {
         await tester.tap(find.byTooltip('Back'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 400));
+        await dismissWarnings(tester);
         expect(find.byTooltip('Open navigation menu'), findsOneWidget);
         expect(find.byTooltip('Back'), findsNothing);
       }
@@ -106,10 +110,24 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
+      await dismissWarnings(tester);
       expect(find.text('Previous route'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 30));
     },
   );
+}
+
+Future<void> dismissWarnings(WidgetTester tester) async {
+  for (var i = 0; i < 8; i++) {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final ok = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('OK'),
+    );
+    if (ok.evaluate().isEmpty) return;
+    await tester.tap(ok);
+  }
 }

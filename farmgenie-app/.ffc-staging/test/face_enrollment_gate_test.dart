@@ -128,6 +128,12 @@ void main() {
         find.text('Take your first-login selfie to finish setup.'),
         findsOneWidget,
       );
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Take your first-login selfie to finish setup.'),
+        findsNothing,
+      );
       expect(find.text('Take selfie'), findsOneWidget);
       expect(tester.widget<PopScope>(find.byType(PopScope)).canPop, isFalse);
       await tester.tap(find.text('Sign out'));
@@ -160,7 +166,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('Upload interrupted.'), findsOneWidget);
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
       expect(find.text('Protected home'), findsNothing);
+      expect(find.textContaining('Upload interrupted.'), findsNothing);
       await tester.tap(find.text('Take selfie'));
       await tester.pumpAndSettle();
       expect(order, ['status', 'camera', 'status', 'camera']);
@@ -190,6 +199,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Protected home'), findsNothing);
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Take selfie'));
       await tester.pumpAndSettle();
       expect(statusCalls, 2);
@@ -222,6 +233,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Protected home'), findsNothing);
       expect(find.textContaining('Network unavailable.'), findsOneWidget);
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
       expect(find.text('Your attendance face photo'), findsNothing);
       expect(find.text('Set up your selfie'), findsNothing);
       await tester.tap(find.text('Retry'));

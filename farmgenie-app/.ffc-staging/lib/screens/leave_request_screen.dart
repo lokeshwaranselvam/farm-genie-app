@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/warning_popup.dart';
 import '../services/farmgenie_api.dart';
 import '../widgets/glass_home.dart';
 
@@ -10,7 +11,8 @@ class LeaveRequestScreen extends StatefulWidget {
   State<LeaveRequestScreen> createState() => _LeaveRequestScreenState();
 }
 
-class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
+class _LeaveRequestScreenState extends State<LeaveRequestScreen>
+    with WarningPopupState {
   final _formKey = GlobalKey<FormState>();
   final _descriptionController = TextEditingController();
   static const _leaveTypes = ['Compensatory Off', 'Leave Without Pay'];
@@ -23,9 +25,6 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
   String? _employeeId;
   String? _company;
   String? _leaveApprover;
-  String? _error;
-  String? _leaveTypeError;
-  bool _dateError = false;
 
   @override
   void initState() {
@@ -42,7 +41,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
   Future<void> _loadEmployeeDetails() async {
     setState(() {
       _loadingProfile = true;
-      _error = null;
+      warningMessage = null;
     });
     try {
       final response = await FarmgenieApi.attendanceStatus();
@@ -58,10 +57,12 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
         }
       }
     } on FarmgenieApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) setState(() => warningMessage = error.message);
     } catch (_) {
       if (mounted) {
-        setState(() => _error = 'Could not load your employee details.');
+        setState(
+          () => warningMessage = 'Could not load your employee details.',
+        );
       }
     } finally {
       if (mounted) setState(() => _loadingProfile = false);
@@ -79,7 +80,6 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
     if (!mounted || picked == null) return;
     setState(() {
       _fromDate = picked;
-      _dateError = false;
       if (_toDate != null && _toDate!.isBefore(picked)) _toDate = picked;
     });
   }
@@ -96,7 +96,6 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
     if (!mounted || picked == null) return;
     setState(() {
       _toDate = picked;
-      _dateError = false;
     });
   }
 
@@ -116,19 +115,24 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
     final missingDates = _fromDate == null || _toDate == null;
     if (!valid || missingLeaveType || missingDates) {
       setState(() {
-        _leaveTypeError = missingLeaveType ? 'Select a leave type.' : null;
-        _dateError = missingDates;
+        warningMessage = [
+          if (missingLeaveType) 'Select a leave type.',
+          if (missingDates) 'Select both leave dates.',
+          if (!valid) 'Enter a reason.',
+        ].join('\n');
       });
       return;
     }
     if (_employeeId == null || _company == null || _employeeId!.isEmpty) {
-      setState(() => _error = 'Employee details are not available yet.');
+      setState(
+        () => warningMessage = 'Employee details are not available yet.',
+      );
       return;
     }
     FocusScope.of(context).unfocus();
     setState(() {
       _submitting = true;
-      _error = null;
+      warningMessage = null;
     });
     try {
       await FarmgenieApi.createLeaveRequest(
@@ -148,16 +152,16 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
         _fromDate = null;
         _toDate = null;
         _halfDay = false;
-        _leaveTypeError = null;
-        _dateError = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Leave request submitted successfully.')),
       );
     } on FarmgenieApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) setState(() => warningMessage = error.message);
     } catch (_) {
-      if (mounted) setState(() => _error = 'Could not submit leave request.');
+      if (mounted) {
+        setState(() => warningMessage = 'Could not submit leave request.');
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -206,20 +210,11 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                       if (value != null) {
                         setState(() {
                           _leaveType = value;
-                          _leaveTypeError = null;
                         });
                       }
                     },
             ),
           ),
-          if (_leaveTypeError != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 5, left: 4),
-              child: Text(
-                _leaveTypeError!,
-                style: const TextStyle(color: Colors.red, fontSize: 11),
-              ),
-            ),
           const SizedBox(height: 10),
           Row(
             children: [
@@ -240,14 +235,6 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
               ),
             ],
           ),
-          if (_dateError)
-            const Padding(
-              padding: EdgeInsets.only(top: 5, left: 4),
-              child: Text(
-                'Select both leave dates.',
-                style: TextStyle(color: Colors.red, fontSize: 11),
-              ),
-            ),
           const SizedBox(height: 10),
           _halfDayTile(),
           const SizedBox(height: 10),
@@ -259,6 +246,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                 maxLines: 3,
                 maxLength: 500,
                 textCapitalization: TextCapitalization.sentences,
+                errorBuilder: (context, error) => const SizedBox.shrink(),
                 validator: (value) => value == null || value.trim().isEmpty
                     ? 'Enter a reason.'
                     : null,
@@ -296,10 +284,6 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
               label: Text(_submitting ? 'Submitting...' : 'Submit request'),
             ),
           ),
-          if (_error != null) ...[
-            const SizedBox(height: 14),
-            Text(_error!, style: const TextStyle(color: Colors.red)),
-          ],
         ],
       ),
     );

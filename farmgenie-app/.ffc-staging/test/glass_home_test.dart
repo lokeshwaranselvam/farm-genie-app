@@ -216,15 +216,18 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: HomeScreen(onLogout: () {})));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await dismissWarnings(tester);
     final homeState = tester.state(
       find.byType(AttendanceScreen, skipOffstage: false).first,
     );
     await tester.tap(find.text('Attendance').last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await dismissWarnings(tester);
     await tester.tap(find.text('Home').last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await dismissWarnings(tester);
     expect(
       tester.state(find.byType(AttendanceScreen, skipOffstage: false).first),
       same(homeState),
@@ -232,6 +235,7 @@ void main() {
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await dismissWarnings(tester);
     expect(find.text('Sales Dashboard'), findsOneWidget);
     await tester.tap(
       find.descendant(
@@ -241,6 +245,7 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await dismissWarnings(tester);
     expect(find.text('Attendance Records'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -275,4 +280,17 @@ void main() {
     debugDisableShadows = true;
     expect(tester.takeException(), isNull);
   });
+}
+
+Future<void> dismissWarnings(WidgetTester tester) async {
+  for (var i = 0; i < 8; i++) {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final ok = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('OK'),
+    );
+    if (ok.evaluate().isEmpty) return;
+    await tester.tap(ok);
+  }
 }

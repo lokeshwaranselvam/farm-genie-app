@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../widgets/warning_popup.dart';
 import '../services/farmgenie_api.dart';
 
 class SalesDashboardScreen extends StatefulWidget {
@@ -10,11 +12,11 @@ class SalesDashboardScreen extends StatefulWidget {
   State<SalesDashboardScreen> createState() => _SalesDashboardScreenState();
 }
 
-class _SalesDashboardScreenState extends State<SalesDashboardScreen> {
+class _SalesDashboardScreenState extends State<SalesDashboardScreen>
+    with WarningPopupState {
   static final _url = Uri.parse('${FarmgenieApi.baseUrl}/sales-dashboard');
   late final WebViewController _controller;
   bool _loading = true;
-  String? _error;
 
   @override
   void initState() {
@@ -27,7 +29,7 @@ class _SalesDashboardScreenState extends State<SalesDashboardScreen> {
             if (!mounted) return;
             setState(() {
               _loading = true;
-              _error = null;
+              warningMessage = null;
             });
           },
           onPageFinished: (_) {
@@ -37,7 +39,7 @@ class _SalesDashboardScreenState extends State<SalesDashboardScreen> {
             if (!mounted || error.isForMainFrame != true) return;
             setState(() {
               _loading = false;
-              _error = 'Sales Dashboard could not be loaded.';
+              warningMessage = 'Sales Dashboard could not be loaded.';
             });
           },
         ),
@@ -49,7 +51,7 @@ class _SalesDashboardScreenState extends State<SalesDashboardScreen> {
     if (mounted) {
       setState(() {
         _loading = true;
-        _error = null;
+        warningMessage = null;
       });
     }
     try {
@@ -59,13 +61,13 @@ class _SalesDashboardScreenState extends State<SalesDashboardScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = error.message;
+        warningMessage = error.message;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Sales Dashboard could not be loaded.';
+        warningMessage = 'Sales Dashboard could not be loaded.';
       });
     }
   }
@@ -86,7 +88,7 @@ class _SalesDashboardScreenState extends State<SalesDashboardScreen> {
               ),
             ),
           ),
-        if (_error != null)
+        if (warningMessage != null)
           Center(
             child: Card(
               margin: const EdgeInsets.all(24),
@@ -97,7 +99,7 @@ class _SalesDashboardScreenState extends State<SalesDashboardScreen> {
                   children: [
                     const Icon(Icons.cloud_off, size: 38),
                     const SizedBox(height: 10),
-                    Text(_error!, textAlign: TextAlign.center),
+
                     const SizedBox(height: 12),
                     FilledButton(
                       onPressed: _loadDashboard,
