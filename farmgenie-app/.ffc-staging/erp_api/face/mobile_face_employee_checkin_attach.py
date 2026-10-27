@@ -8,7 +8,13 @@ if is_mobile_checkin:
     if log_type not in ("IN", "OUT"):
         frappe.throw("The attendance action is invalid.")
     requested_action = "check_in" if log_type == "IN" else "check_out"
-if is_mobile_checkin or (command == "farmgenie_employee_attendance" and requested_action in ("check_in", "check_out")):
+# The guard lets the web check-in role use mobile_checkin without a face receipt.
+web_checkin = bool(
+    is_mobile_checkin and not frappe.form_dict.get("face_verification")
+    and "iOS User" in frappe.get_roles(frappe.session.user)
+)
+if not web_checkin and (is_mobile_checkin or (
+        command == "farmgenie_employee_attendance" and requested_action in ("check_in", "check_out"))):
     include_timings = frappe.form_dict.get("include_timings") in (True, 1, "1", "true")
     attach_started = frappe.utils.now_datetime() if include_timings else None
     current_user = frappe.session.user

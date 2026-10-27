@@ -1,15 +1,20 @@
 import 'dart:convert';
 
 import 'package:farmgenie/services/farmgenie_api.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-Future<Map<String, dynamic>> submit() => FarmgenieApi.createLeaveRequest(
+Future<Map<String, dynamic>> submit({
+  bool halfDay = false,
+  String? halfDayDate,
+}) => FarmgenieApi.createLeaveRequest(
   fromDate: '2026-10-31',
   toDate: '2026-11-02',
-  halfDay: false,
+  halfDay: halfDay,
+  halfDayDate: halfDayDate,
   leaveType: 'Leave Without Pay',
   description: 'Personal work',
   employee: 'HR-EMP-00035',
@@ -30,7 +35,50 @@ Matcher errorContaining(String message) => throwsA(
 
 void main() {
   setUp(() {
-    SharedPreferences.setMockInitialValues({'farmgenie_sid': 'session-1'});
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({'farmgenie_sid': 'session-1'});
+    FarmgenieApi.resetSessionCache();
+  });
+
+  test('half-day leave sends the chosen half_day_date', () async {
+    final client = MockClient((request) async {
+      if (request.method == 'GET') return desk();
+      expect(request.bodyFields['half_day'], '1');
+      expect(request.bodyFields['half_day_date'], '2026-11-01');
+      return http.Response('{"message":{"ok":true}}', 200);
+    });
+    final result = await http.runWithClient(
+      () => submit(halfDay: true, halfDayDate: '2026-11-01'),
+      () => client,
+    );
+    expect(result['ok'], true);
+  });
+
+  test('full-day leave never sends half_day_date', () async {
+    final client = MockClient((request) async {
+      if (request.method == 'GET') return desk();
+      expect(request.bodyFields['half_day'], '0');
+      expect(request.bodyFields.containsKey('half_day_date'), isFalse);
+      return http.Response('{"message":{"ok":true}}', 200);
+    });
+    final result = await http.runWithClient(
+      () => submit(halfDayDate: '2026-11-01'),
+      () => client,
+    );
+    expect(result['ok'], true);
+  });
+
+  test('desk redirect to login reports an expired session', () async {
+    final before = FarmgenieApi.sessionExpired.value;
+    final client = MockClient((request) async {
+      expect(request.method, 'GET');
+      return http.Response('', 302, headers: {'location': '/login'});
+    });
+    await expectLater(
+      http.runWithClient(submit, () => client),
+      throwsA(isA<SessionExpiredException>()),
+    );
+    expect(FarmgenieApi.sessionExpired.value, before + 1);
   });
 
   test('leave bootstraps CSRF and preserves every submission field', () async {
@@ -113,7 +161,8 @@ void main() {
   });
 
   test('missing session sends no requests', () async {
-    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
+    FarmgenieApi.resetSessionCache();
     final client = MockClient((_) async => fail('Must not send a request'));
     await expectLater(
       http.runWithClient(submit, () => client),
@@ -124,8 +173,12 @@ void main() {
   test('account change during bootstrap blocks POST', () async {
     final client = MockClient((request) async {
       expect(request.method, 'GET');
-      final preferences = await SharedPreferences.getInstance();
-      await preferences.setString('farmgenie_sid', 'session-2');
+      // Simulates another login replacing the stored session mid-request.
+      await const FlutterSecureStorage().write(
+        key: 'farmgenie_sid',
+        value: 'session-2',
+      );
+      FarmgenieApi.resetSessionCache();
       return desk();
     });
     await expectLater(

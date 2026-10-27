@@ -4,6 +4,8 @@
 <dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Farmgenie uses the front camera to register and verify your attendance selfie.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Farmgenie uses your location during check-in and check-out to verify that you are at your office for attendance.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

@@ -19,6 +19,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen>
   String? _leaveType;
   DateTime? _fromDate;
   DateTime? _toDate;
+  DateTime? _halfDayDate;
   bool _halfDay = false;
   bool _loadingProfile = true;
   bool _submitting = false;
@@ -69,34 +70,76 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen>
     }
   }
 
+  bool get _multiDay =>
+      _fromDate != null && _toDate != null && _toDate!.isAfter(_fromDate!);
+
+  // The screen can stay alive past midnight, so a previously picked date may
+  // now fall outside the picker range; showDatePicker asserts on that.
+  static DateTime _clamp(DateTime value, DateTime first, DateTime last) =>
+      value.isBefore(first)
+      ? first
+      : value.isAfter(last)
+      ? last
+      : value;
+
+  /// Drops a half-day date that no longer lies within the leave range.
+  void _keepHalfDayDateInRange() {
+    final date = _halfDayDate;
+    if (date == null) return;
+    if (_fromDate == null ||
+        _toDate == null ||
+        date.isBefore(_fromDate!) ||
+        date.isAfter(_toDate!)) {
+      _halfDayDate = null;
+    }
+  }
+
   Future<void> _pickFromDate() async {
     final today = DateUtils.dateOnly(DateTime.now());
+    final lastDate = DateTime(today.year + 2, 12, 31);
     final picked = await showDatePicker(
       context: context,
       firstDate: today,
-      lastDate: DateTime(today.year + 2, 12, 31),
-      initialDate: _fromDate ?? today,
+      lastDate: lastDate,
+      initialDate: _clamp(_fromDate ?? today, today, lastDate),
     );
     if (!mounted || picked == null) return;
     setState(() {
       _fromDate = picked;
       if (_toDate != null && _toDate!.isBefore(picked)) _toDate = picked;
+      _keepHalfDayDateInRange();
     });
   }
 
   Future<void> _pickToDate() async {
     final today = DateUtils.dateOnly(DateTime.now());
-    final firstDate = _fromDate ?? today;
+    final lastDate = DateTime(today.year + 2, 12, 31);
+    final firstDate = _clamp(_fromDate ?? today, today, lastDate);
     final picked = await showDatePicker(
       context: context,
       firstDate: firstDate,
-      lastDate: DateTime(today.year + 2, 12, 31),
-      initialDate: _toDate ?? firstDate,
+      lastDate: lastDate,
+      initialDate: _clamp(_toDate ?? firstDate, firstDate, lastDate),
     );
     if (!mounted || picked == null) return;
     setState(() {
       _toDate = picked;
+      _keepHalfDayDateInRange();
     });
+  }
+
+  Future<void> _pickHalfDayDate() async {
+    final from = _fromDate;
+    final to = _toDate;
+    if (from == null || to == null || to.isBefore(from)) return;
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: from,
+      lastDate: to,
+      initialDate: _clamp(_halfDayDate ?? from, from, to),
+    );
+    if (!mounted || picked == null) return;
+    setState(() => _halfDayDate = picked);
   }
 
   String _date(DateTime value) =>
@@ -123,6 +166,18 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen>
       });
       return;
     }
+    if (_toDate!.isBefore(_fromDate!)) {
+      setState(() => warningMessage = 'To date cannot be before from date.');
+      return;
+    }
+    _keepHalfDayDateInRange();
+    if (_halfDay && _multiDay && _halfDayDate == null) {
+      setState(() => warningMessage = 'Select which day is the half day.');
+      return;
+    }
+    final halfDayDate = _halfDay
+        ? _date(_multiDay ? _halfDayDate! : _fromDate!)
+        : null;
     if (_employeeId == null || _company == null || _employeeId!.isEmpty) {
       setState(
         () => warningMessage = 'Employee details are not available yet.',
@@ -139,6 +194,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen>
         fromDate: _date(_fromDate!),
         toDate: _date(_toDate!),
         halfDay: _halfDay,
+        halfDayDate: halfDayDate,
         leaveType: _leaveType!,
         description: _descriptionController.text.trim(),
         employee: _employeeId!,
@@ -151,6 +207,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen>
         _leaveType = null;
         _fromDate = null;
         _toDate = null;
+        _halfDayDate = null;
         _halfDay = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -222,7 +279,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen>
                 child: _dateButton(
                   label: 'From date',
                   value: _displayDate(_fromDate),
-                  onPressed: _pickFromDate,
+                  onPressed: _submitting ? null : _pickFromDate,
                 ),
               ),
               const SizedBox(width: 10),
@@ -230,13 +287,21 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen>
                 child: _dateButton(
                   label: 'To date',
                   value: _displayDate(_toDate),
-                  onPressed: _pickToDate,
+                  onPressed: _submitting ? null : _pickToDate,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 10),
           _halfDayTile(),
+          if (_halfDay && _multiDay) ...[
+            const SizedBox(height: 10),
+            _dateButton(
+              label: 'Half-day date',
+              value: _displayDate(_halfDayDate),
+              onPressed: _submitting ? null : _pickHalfDayDate,
+            ),
+          ],
           const SizedBox(height: 10),
           Form(
             key: _formKey,
@@ -292,7 +357,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen>
   Widget _dateButton({
     required String label,
     required String value,
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
   }) {
     return OutlinedButton(
       onPressed: onPressed,

@@ -34,6 +34,8 @@ class _ProfileScreenState extends State<ProfileScreen> with WarningPopupState {
         _username = username;
         _data = Map<String, dynamic>.from(response['data'] as Map? ?? {});
       });
+    } on FarmgenieApiException catch (error) {
+      if (mounted) setState(() => warningMessage = error.message);
     } catch (_) {
       if (mounted) {
         setState(
@@ -84,6 +86,11 @@ class _ProfileScreenState extends State<ProfileScreen> with WarningPopupState {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(warningMessage!, textAlign: TextAlign.center),
+                  ),
+                  const SizedBox(height: 8),
                   TextButton(onPressed: _load, child: const Text('Retry')),
                 ],
               ),

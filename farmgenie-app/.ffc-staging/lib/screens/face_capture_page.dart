@@ -16,8 +16,9 @@ import '../utils/face/face_blink_controller.dart';
 import '../utils/face/face_image_quality.dart';
 import '../utils/face/face_performance_trace.dart';
 
-/// Returns a raw JPEG only after one continuous blink and a clear eyes-open
-/// photo. [validateCapture] returns null to accept, or guidance to retry.
+/// Returns a raw JPEG only after one continuous blink, a random head turn by
+/// the same tracked face and a clear eyes-open photo taken right after it.
+/// [validateCapture] returns null to accept, or guidance to retry.
 class FaceCapturePage extends StatefulWidget {
   const FaceCapturePage({
     super.key,
@@ -40,13 +41,20 @@ class FaceCapturePage extends StatefulWidget {
 class _FaceCapturePageState extends State<FaceCapturePage>
     with WidgetsBindingObserver {
   static const _blue = Color(0xFF075C3D);
+
+  /// The final photo must be taken this soon after the last tracked frame
+  /// that completed the liveness challenge, so it cannot be swapped.
+  static const _maximumCaptureDelay = Duration(milliseconds: 1500);
   final _blink = FaceBlinkController();
   final _clock = Stopwatch()..start();
   static const _timing = FacePerformanceTrace();
+  // Classification is needed for eye-open probabilities. Landmarks are not
+  // read from stream frames; alignment uses the photo detector in
+  // FaceEmbeddingService, which keeps its own landmark detection.
   final _detector = FaceDetector(
     options: FaceDetectorOptions(
       enableClassification: true,
-      enableLandmarks: true,
+      enableLandmarks: false,
       enableTracking: true,
       performanceMode: FaceDetectorMode.fast,
       minFaceSize: 0.15,
@@ -123,6 +131,24 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         .catchError((Object error) {});
   }
 
+  /// Stops frame analysis after an error while keeping the preview open.
+  /// Serialized with start/release so it cannot race camera disposal.
+  void _queueStopStream() {
+    _cameraOperations = _cameraOperations
+        .then((_) async {
+          final pending = _frameWork;
+          if (pending != null) await pending;
+          final camera = _camera;
+          if (camera == null ||
+              !camera.value.isInitialized ||
+              !camera.value.isStreamingImages) {
+            return;
+          }
+          await camera.stopImageStream();
+        })
+        .catchError((Object error) {});
+  }
+
   bool _validSession(int session) =>
       _alive && mounted && _active && !_completed && session == _session;
 
@@ -172,9 +198,11 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       _showError('A front camera is required for face verification.');
       return;
     }
+    // Medium keeps stream analysis light. The final photo uses the same
+    // preset, so it is smaller; the face-size checks still apply to it.
     final camera = CameraController(
       front,
-      ResolutionPreset.high,
+      ResolutionPreset.medium,
       enableAudio: false,
       imageFormatGroup: Platform.isAndroid
           ? ImageFormatGroup.nv21
@@ -369,7 +397,16 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       photo = File((await camera.takePicture()).path);
       if (!_validSession(session)) return;
       String? error;
-      if (!widget.validatePhotoInCallback || widget.validateCapture == null) {
+      // The photo must follow the tracked liveness frames immediately. Exactly
+      // one face is then required in it: below, or by the embedding service
+      // when the callback validates the photo.
+      final readyAt = _blink.readyAt;
+      if (readyAt == null ||
+          _clock.elapsed - readyAt > _maximumCaptureDelay) {
+        error =
+            'Hold still facing the camera after turning back, and try again.';
+      } else if (!widget.validatePhotoInCallback ||
+          widget.validateCapture == null) {
         final faces = await _detector.processImage(
           InputImage.fromFilePath(photo.path),
         );
@@ -437,6 +474,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
 
   void _showError(String error) {
     _timer?.cancel();
+    _queueStopStream();
     if (!_alive || !mounted) return;
     setState(() {
       _starting = false;
@@ -463,6 +501,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         (_capturing ? 'Checking your selfie…' : _blink.progress.instruction);
     final needsRetry =
         _error != null || _retryMessage != null || _blink.progress.needsRetry;
+    final turn = needsRetry || _capturing ? null : _blink.turnDirection;
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
@@ -518,7 +557,13 @@ class _FaceCapturePageState extends State<FaceCapturePage>
               child: Column(
                 children: [
                   Icon(
-                    needsRetry ? Icons.info_outline : Icons.face,
+                    needsRetry
+                        ? Icons.info_outline
+                        : turn == FaceTurnDirection.left
+                        ? Icons.west_rounded
+                        : turn == FaceTurnDirection.right
+                        ? Icons.east_rounded
+                        : Icons.face,
                     color: _blue,
                     size: 30,
                   ),
@@ -535,7 +580,8 @@ class _FaceCapturePageState extends State<FaceCapturePage>
                     ),
                   const SizedBox(height: 8),
                   const Text(
-                    'The camera takes your selfie automatically after you blink.',
+                    'Blink, then turn your head the way shown. The camera '
+                    'takes your selfie automatically.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Color(0xFF667085), height: 1.4),
                   ),

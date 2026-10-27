@@ -728,6 +728,34 @@ void main() {
     },
   );
 
+  test('attendance receipt carries GPS integrity fields', () async {
+    final api = apiWith(
+      MockClient((request) async {
+        final body = jsonDecode(request.body) as Map;
+        expect(body['latitude'], 13);
+        expect(body['longitude'], 80);
+        expect(body['is_mocked'], isTrue);
+        expect(body['accuracy'], 12.5);
+        return response({
+          'current_user': account,
+          'record_id': 'FACE-LOG-1',
+          'receipt_version': 2,
+        });
+      }),
+    );
+    final receipt = await api.recordVerification(
+      status: enrolledStatus(),
+      action: 'attendance_out',
+      similarity: 0.9,
+      latitude: 13,
+      longitude: 80,
+      isMocked: true,
+      accuracy: 12.5,
+      capturedOn: DateTime.utc(2026, 10, 12, 8, 30),
+    );
+    expect(receipt.recordId, 'FACE-LOG-1');
+  });
+
   test(
     'old server capability blocks metadata submission without uploading',
     () async {

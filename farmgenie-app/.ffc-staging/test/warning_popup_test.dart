@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:farmgenie/screens/attendance_screen.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:farmgenie/services/farmgenie_api.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // ignore: depend_on_referenced_packages
 import 'package:geolocator_platform_interface/geolocator_platform_interface.dart';
@@ -12,7 +14,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('attendance warning appears only in its popup', (tester) async {
-    SharedPreferences.setMockInitialValues({'farmgenie_sid': 'test-session'});
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({
+      'farmgenie_sid': 'test-session',
+    });
+    FarmgenieApi.resetSessionCache();
     final previousLocation = GeolocatorPlatform.instance;
     GeolocatorPlatform.instance = _DisabledLocation();
     addTearDown(() => GeolocatorPlatform.instance = previousLocation);

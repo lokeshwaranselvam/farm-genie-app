@@ -113,8 +113,15 @@ class FaceEmbeddingService {
       final landmarks = _faceLandmarks(face);
       final tensorData = await _timing.measure(
         'alignment and quality',
-        () =>
-            compute(_alignedTensor, _AlignmentInput(prepared.bytes, landmarks)),
+        () => compute(
+          _alignedTensor,
+          _AlignmentInput(
+            prepared.rgb,
+            prepared.width,
+            prepared.height,
+            landmarks,
+          ),
+        ),
       );
       final session = await sessionFuture;
       OrtValue? input;
@@ -300,13 +307,19 @@ class FaceEmbeddingService {
 }
 
 class _PreparedImage {
+  /// Upright JPEG for ML Kit, which needs a file path.
   final Uint8List bytes;
+
+  /// The same upright pixels as packed RGB, so alignment need not decode the
+  /// JPEG again. ML Kit landmarks share these coordinates.
+  final Uint8List rgb;
   final int width;
   final int height;
   final double centerBrightness;
 
   const _PreparedImage(
     this.bytes,
+    this.rgb,
     this.width,
     this.height,
     this.centerBrightness,
@@ -322,7 +335,7 @@ _PreparedImage _prepareUprightImage(Uint8List bytes) {
   }
   var upright = image.bakeOrientation(decoded);
   final centerBrightness = faceCenterBrightness(upright);
-  const maximumSide = 1600;
+  const maximumSide = 1280;
   final longSide = math.max(upright.width, upright.height);
   if (longSide > maximumSide) {
     final ratio = maximumSide / longSide;
@@ -333,11 +346,13 @@ _PreparedImage _prepareUprightImage(Uint8List bytes) {
       interpolation: image.Interpolation.linear,
     );
   }
-  // Encode upright with no original orientation metadata. Both ML Kit and
-  // the alignment worker decode these same pixels, so their coordinates agree.
+  // Encode upright with no original orientation metadata. ML Kit detects on
+  // this JPEG; alignment uses the same upright pixels at the same size, so
+  // their coordinates agree. A temporary file is required by ML Kit.
   upright.exif.clear();
   return _PreparedImage(
-    Uint8List.fromList(image.encodeJpg(upright, quality: 95)),
+    Uint8List.fromList(image.encodeJpg(upright, quality: 90)),
+    FaceAlignment.rgbBytes(upright),
     upright.width,
     upright.height,
     centerBrightness,
@@ -345,28 +360,33 @@ _PreparedImage _prepareUprightImage(Uint8List bytes) {
 }
 
 class _AlignmentInput {
-  final Uint8List bytes;
+  final Uint8List rgb;
+  final int width;
+  final int height;
   final List<FacePoint> landmarks;
 
-  const _AlignmentInput(this.bytes, this.landmarks);
+  const _AlignmentInput(this.rgb, this.width, this.height, this.landmarks);
 }
 
 Float32List _alignedTensor(_AlignmentInput input) {
-  final decoded = image.decodeImage(input.bytes);
-  if (decoded == null) {
-    throw const FaceEmbeddingException(
-      'The captured selfie could not be read.',
-    );
-  }
-  final aligned = FaceAlignment.align(decoded, input.landmarks);
+  final aligned = FaceAlignment.alignRgb(
+    input.rgb,
+    input.width,
+    input.height,
+    input.landmarks,
+  );
   _checkImageQuality(aligned);
   return FaceAlignment.rgbNchw(aligned);
 }
 
 void _checkImageQuality(image.Image aligned) {
+  final rgb = FaceAlignment.rgbBytes(aligned);
+  final width = aligned.width;
   double luminance(int x, int y) {
-    final pixel = aligned.getPixel(x, y);
-    return pixel.r * 0.299 + pixel.g * 0.587 + pixel.b * 0.114;
+    final offset = (y * width + x) * 3;
+    return rgb[offset] * 0.299 +
+        rgb[offset + 1] * 0.587 +
+        rgb[offset + 2] * 0.114;
   }
 
   var brightness = 0.0;

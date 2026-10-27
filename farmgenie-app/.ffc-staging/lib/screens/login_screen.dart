@@ -27,7 +27,7 @@ class _LoginScreenState extends State<LoginScreen> with WarningPopupState {
   bool _savingPreference = false;
   bool _loading = false;
   bool _obscure = true;
-  bool _rememberMe = true;
+  bool _rememberMe = false;
 
   @override
   void initState() {

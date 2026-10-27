@@ -19,6 +19,7 @@ if model_version not in ("opencv-sface-2021dec-v1", "opencv-sface-2021dec-int8bq
     frappe.throw("The face model has changed. Update the app before registering or verifying.")
 minimum_similarity = 0.5
 max_jpeg_bytes = 2 * 1024 * 1024
+max_gps_accuracy_meters = 50
 reference_name = "GENIE-FACE-REF-" + frappe.utils.sha256_hash(current_user)[:32]
 reference = None
 row = frappe.db.get_value(
@@ -27,7 +28,9 @@ row = frappe.db.get_value(
      "file_url", "content_hash", "file_name"], as_dict=True,
 )
 if row:
-    if (row.owner != current_user or not row.is_private
+    # Administrator owns references so the employee cannot delete/re-enroll them.
+    # References created before this rule are still owned by the user.
+    if (row.owner not in ("Administrator", current_user) or not row.is_private
         or row.attached_to_doctype != "User" or row.attached_to_name != current_user
         or not (row.file_url or "").startswith("/private/files/")):
         frappe.throw("Your face reference is invalid. Contact your administrator.")
@@ -41,6 +44,9 @@ if action in ("enroll", "record_verification"):
         frappe.throw("The face model has changed. Update the app before registering or verifying.")
     if frappe.form_dict.get("blink_completed") not in (True, 1, "1", "true"):
         frappe.throw("Complete the live blink scan before registering or verifying your face.")
+    # Migrate older user-owned references (POST requests commit; GET does not).
+    if row and row.owner != "Administrator":
+        frappe.db.set_value("File", row.name, "owner", "Administrator", update_modified=False)
 
 if action == "enroll":
     if reference:
@@ -73,6 +79,8 @@ if action == "enroll":
     file_doc.decode = False
     # Deterministic PK prevents concurrent duplicate enrollments and overwrites.
     file_doc.insert(ignore_permissions=True, set_name=reference_name)
+    # Narrow elevation: owners can delete their own Files, so hand it to Administrator.
+    frappe.db.set_value("File", file_doc.name, "owner", "Administrator", update_modified=False)
     reference = {"name": file_doc.name, "url": file_doc.file_url,
                  "version": file_doc.content_hash or file_doc.name}
 
@@ -102,8 +110,20 @@ if action == "record_verification":
             similarity = float(frappe.form_dict.get("similarity"))
             latitude = float(frappe.form_dict.get("latitude"))
             longitude = float(frappe.form_dict.get("longitude"))
+            accuracy = float(frappe.form_dict.get("accuracy"))
         except (TypeError, ValueError):
-            frappe.throw("A valid face score and fresh GPS coordinates are required.")
+            frappe.throw("A valid face score and fresh GPS coordinates are required. Update the app.")
+        # Device-reported, like the score: blocks fake-GPS apps on the real app.
+        if frappe.form_dict.get("is_mocked") not in (False, 0, "0", "false", "False"):
+            frappe.throw("Turn off fake/mock location apps to mark attendance.")
+        if not 0 < accuracy:
+            frappe.throw("Your GPS signal is too weak. Move to open sky and try again.")
+        if accuracy > max_gps_accuracy_meters:
+            # Operation staff have no geofence, so GPS precision is not enforced.
+            is_operation = frappe.get_meta("Employee").has_field("custom_is_operation") and frappe.db.get_value(
+                "Employee", {"user_id": current_user, "status": "Active"}, "custom_is_operation")
+            if not frappe.utils.cint(is_operation):
+                frappe.throw("Your GPS signal is too weak. Move to open sky and try again.")
         if not minimum_similarity <= similarity <= 1:
             frappe.throw("Your face did not match your registered selfie. Please try again.")
         if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
@@ -117,7 +137,7 @@ if action == "record_verification":
             "version": 2, "current_user": current_user, "action": verification_action,
             "reference_file": reference["name"], "reference_version": reference["version"],
             "model_version": model_version, "similarity": similarity, "blink_completed": True,
-            "latitude": latitude, "longitude": longitude,
+            "latitude": latitude, "longitude": longitude, "accuracy": accuracy, "is_mocked": False,
             "captured_on": str(frappe.form_dict.get("captured_on") or "")[:64],
             "received_on": frappe.utils.now(), "verification_source": "device_reported", "used": False,
         }

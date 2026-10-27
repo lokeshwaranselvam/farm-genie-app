@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,9 +20,20 @@ class FarmgenieApiException implements Exception {
   String toString() => message;
 }
 
+/// ERP no longer accepts the stored session; the app must return to login.
+class SessionExpiredException extends FarmgenieApiException {
+  const SessionExpiredException()
+    : super('Your session expired. Please log in again.');
+}
+
 class FarmgenieApi {
   FarmgenieApi._();
   static final employeeProfile = ValueNotifier<Map<String, dynamic>>({});
+
+  /// Incremented whenever ERP reports that the stored session is gone.
+  static final sessionExpired = ValueNotifier<int>(0);
+
+  static void notifySessionExpired() => sessionExpired.value++;
 
   static Future<Uint8List?> employeePhoto(String path) async {
     final uri = Uri.parse(baseUrl).resolve(path);
@@ -54,9 +66,63 @@ class FarmgenieApi {
   static Future<SharedPreferences> get _preferences async =>
       SharedPreferences.getInstance();
 
+  static const _sidKey = 'farmgenie_sid';
+  static const _secureStorage = FlutterSecureStorage();
+  // Secure storage reads are slow; keep the session in memory once loaded.
+  static String? _cachedSid;
+  static bool _sidLoaded = false;
+
   static Future<String?> _sid() async {
-    final preferences = await _preferences;
-    return preferences.getString('farmgenie_sid');
+    if (_sidLoaded) return _cachedSid;
+    String? sid;
+    try {
+      sid = await _secureStorage.read(key: _sidKey);
+    } catch (_) {
+      // An unreadable keystore must not break every request; treat as no
+      // session so the user signs in again.
+    }
+    if (sid == null || sid.isEmpty) {
+      // One-time migration from the old plain-text SharedPreferences copy.
+      final preferences = await _preferences;
+      final legacy = preferences.getString(_sidKey);
+      if (legacy != null && legacy.isNotEmpty) {
+        sid = legacy;
+        try {
+          await _secureStorage.write(key: _sidKey, value: legacy);
+          await preferences.remove(_sidKey);
+        } catch (_) {
+          // Keep the legacy copy so a later launch can retry the move.
+        }
+      }
+    }
+    // A concurrent login/logout may have stored a newer value meanwhile.
+    if (_sidLoaded) return _cachedSid;
+    _cachedSid = sid == null || sid.isEmpty ? null : sid;
+    _sidLoaded = true;
+    return _cachedSid;
+  }
+
+  static Future<void> _storeSid(String? sid) async {
+    _cachedSid = sid;
+    _sidLoaded = true;
+    if (sid == null) {
+      try {
+        await _secureStorage.delete(key: _sidKey);
+      } catch (_) {
+        // The in-memory session is already cleared; ERP rejects a stale sid.
+      }
+    } else {
+      await _secureStorage.write(key: _sidKey, value: sid);
+    }
+  }
+
+  /// Forget the in-memory session so the next read comes from storage.
+  @visibleForTesting
+  static void resetSessionCache() {
+    _cachedSid = null;
+    _sidLoaded = false;
+    _faceVerifiedSid = null;
+    _faceVerifiedUser = null;
   }
 
   static Future<String?> faceSessionId() => _sid();
@@ -83,10 +149,11 @@ class FarmgenieApi {
         return http.Response.fromStream(await client.send(request));
       })().timeout(const Duration(seconds: 15));
       final user = _json(response)['message'];
-      if (response.statusCode != 200 ||
-          user is! String ||
-          user.isEmpty ||
-          user == 'Guest') {
+      if (user == 'Guest' || _indicatesExpiredSession(response)) {
+        if (await _sid() == sid) notifySessionExpired();
+        throw const SessionExpiredException();
+      }
+      if (response.statusCode != 200 || user is! String || user.isEmpty) {
         throw const FarmgenieApiException(
           'Your session expired. Please log in again.',
         );
@@ -99,6 +166,39 @@ class FarmgenieApi {
       _faceVerifiedSid = sid;
       _faceVerifiedUser = user;
       return user;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Ask ERP whether the stored session is still valid.
+  ///
+  /// Returns true when ERP confirms a signed-in user, false when there is no
+  /// session or ERP reports Guest/expired, and null when ERP could not be
+  /// reached, so callers can keep offline users signed in.
+  static Future<bool?> validateSession() async {
+    final sid = await _sid();
+    if (sid == null || sid.isEmpty) return false;
+    final client = http.Client();
+    try {
+      final request =
+          http.Request(
+              'GET',
+              Uri.parse('$baseUrl/api/method/frappe.auth.get_logged_user'),
+            )
+            ..followRedirects = false
+            ..headers.addAll(_headers(sid));
+      final response = await (() async {
+        return http.Response.fromStream(await client.send(request));
+      })().timeout(const Duration(seconds: 10));
+      final user = _json(response)['message'];
+      if (user == 'Guest' || _indicatesExpiredSession(response)) return false;
+      if (response.statusCode == 200 && user is String && user.isNotEmpty) {
+        return true;
+      }
+      return null;
+    } catch (_) {
+      return null;
     } finally {
       client.close();
     }
@@ -138,6 +238,30 @@ class FarmgenieApi {
       if (decoded is Map<String, dynamic>) return decoded;
     } catch (_) {}
     return <String, dynamic>{};
+  }
+
+  /// True when ERP says the request was made without a valid login.
+  static bool _indicatesExpiredSession(http.Response response) {
+    final excType = _json(response)['exc_type']?.toString() ?? '';
+    if (excType == 'SessionExpired' || excType == 'AuthenticationError') {
+      return true;
+    }
+    if (response.statusCode != 401 && response.statusCode != 403) {
+      return false;
+    }
+    final body = response.body;
+    return body.contains('Login is required') ||
+        body.contains('SessionExpired') ||
+        (body.contains('PermissionError') && body.contains('Guest'));
+  }
+
+  /// Failure for an authenticated request; signals session expiry globally.
+  static FarmgenieApiException _failure(http.Response response) {
+    if (_indicatesExpiredSession(response)) {
+      notifySessionExpired();
+      return const SessionExpiredException();
+    }
+    return FarmgenieApiException(_error(response));
   }
 
   static String _error(http.Response response) {
@@ -188,7 +312,7 @@ class FarmgenieApi {
 
   static Map<String, dynamic> _message(http.Response response) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw FarmgenieApiException(_error(response));
+      throw _failure(response);
     }
     final decoded = _json(response);
     final message = decoded['message'];
@@ -219,28 +343,41 @@ class FarmgenieApi {
       throw FarmgenieApiException(_error(response));
     }
 
+    // package:http joins multiple Set-Cookie headers with commas, so sid may
+    // follow another cookie instead of starting the header.
     final setCookie = response.headers['set-cookie'] ?? '';
-    final match = RegExp(r'(?:^|;\s*)sid=([^;]+)').firstMatch(setCookie);
-    if (match == null || match.group(1)!.isEmpty) {
+    final sid = RegExp(
+      r'(?:^|[;,]\s*)sid=([^;,]+)',
+    ).firstMatch(setCookie)?.group(1)?.trim();
+    if (sid == null || sid.isEmpty || sid == 'Guest') {
       throw const FarmgenieApiException(
         'Login succeeded but ERP did not return a session cookie.',
       );
     }
 
+    _faceVerifiedSid = null;
+    _faceVerifiedUser = null;
+    await _storeSid(sid);
     final preferences = await _preferences;
-    await preferences.setString('farmgenie_sid', match.group(1)!);
     await preferences.setString('farmgenie_user', username);
   }
 
-  static Future<void> logout() async {
+  /// Clears the local session; [remote] also closes it on ERP.
+  static Future<void> logout({bool remote = true}) async {
     final sid = await _sid();
     try {
-      await http
-          .post(Uri.parse('$baseUrl/api/method/logout'), headers: _headers(sid))
-          .timeout(const Duration(seconds: 10));
+      if (remote) {
+        await http
+            .post(
+              Uri.parse('$baseUrl/api/method/logout'),
+              headers: _headers(sid),
+            )
+            .timeout(const Duration(seconds: 10));
+      }
     } finally {
+      await _storeSid(null);
       final preferences = await _preferences;
-      await preferences.remove('farmgenie_sid');
+      await preferences.remove(_sidKey);
       await preferences.remove('farmgenie_user');
       _faceVerifiedSid = null;
       _faceVerifiedUser = null;
@@ -399,7 +536,7 @@ class FarmgenieApi {
         .get(uri, headers: _headers(sid))
         .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
-      throw FarmgenieApiException(_error(response));
+      throw _failure(response);
     }
     final records = _json(response)['message'];
     if (records is! List) {
@@ -505,6 +642,11 @@ class FarmgenieApi {
     return {'ok': true, 'data': data};
   }
 
+  static FarmgenieApiException _leaveFailure(http.Response response) {
+    if (_indicatesExpiredSession(response)) return _failure(response);
+    return FarmgenieApiException(_leaveError(response));
+  }
+
   static String _leaveError(http.Response response) {
     final decoded = _json(response);
     if (decoded['exc_type'] == 'CSRFTokenError') {
@@ -551,11 +693,16 @@ class FarmgenieApi {
             'ERP redirected to a different site. Check the ERP site URL.',
           );
         }
+        // Desk sends signed-out users to the login page.
+        if (next.path == '/login') {
+          notifySessionExpired();
+          throw const SessionExpiredException();
+        }
         uri = next;
         continue;
       }
       if (response.statusCode != 200) {
-        throw FarmgenieApiException(_leaveError(response));
+        throw _leaveFailure(response);
       }
       final match = RegExp(r'''frappe\.csrf_token\s*=\s*["']([^"']+)["']''')
           .firstMatch(response.body);
@@ -578,6 +725,7 @@ class FarmgenieApi {
     required String fromDate,
     required String toDate,
     required bool halfDay,
+    String? halfDayDate,
     required String leaveType,
     required String description,
     required String employee,
@@ -609,6 +757,7 @@ class FarmgenieApi {
               'from_date': fromDate,
               'to_date': toDate,
               'half_day': halfDay ? '1' : '0',
+              if (halfDay && halfDayDate != null) 'half_day_date': halfDayDate,
               'leave_type': leaveType,
               'description': description,
               'employee': employee,
@@ -619,7 +768,7 @@ class FarmgenieApi {
         return http.Response.fromStream(await client.send(request));
       })().timeout(const Duration(seconds: 15));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw FarmgenieApiException(_leaveError(response));
+        throw _leaveFailure(response);
       }
       return _message(response);
     } finally {

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'screens/attendance_screen.dart';
+import 'screens/erp_web_view_screen.dart';
 import 'screens/face_enrollment_gate.dart';
 import 'screens/login_screen.dart';
 import 'screens/material_request_screen.dart';
@@ -28,20 +29,53 @@ class FarmgenieApp extends StatefulWidget {
 }
 
 class _FarmgenieAppState extends State<FarmgenieApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
   Widget? _screen;
+  bool _signedIn = false;
+  bool _handlingExpiry = false;
 
   @override
   void initState() {
     super.initState();
+    FarmgenieApi.sessionExpired.addListener(_onSessionExpired);
     _checkSession();
   }
 
+  @override
+  void dispose() {
+    FarmgenieApi.sessionExpired.removeListener(_onSessionExpired);
+    super.dispose();
+  }
+
   Future<void> _checkSession() async {
-    final signedIn = await FarmgenieApi.hasSession();
+    // null means ERP was unreachable: keep offline users on the home screen.
+    final valid = await FarmgenieApi.validateSession();
+    if (valid == false) {
+      try {
+        await FarmgenieApi.logout(remote: false);
+      } catch (_) {
+        // Local cleanup is best effort; the login screen is shown regardless.
+      }
+    }
     if (!mounted) return;
-    setState(() {
-      _screen = signedIn ? _faceHome() : LoginScreen(onLoggedIn: _showHome);
-    });
+    if (valid == false) {
+      _showLogin();
+    } else {
+      _showHome();
+    }
+  }
+
+  Future<void> _onSessionExpired() async {
+    if (!_signedIn || _handlingExpiry) return;
+    _handlingExpiry = true;
+    try {
+      await FarmgenieApi.logout(remote: false);
+    } catch (_) {
+      // ERP already rejected the session; only local cleanup matters.
+    } finally {
+      _handlingExpiry = false;
+    }
+    _showLogin();
   }
 
   Widget _faceHome() => FaceEnrollmentGate(
@@ -56,16 +90,27 @@ class _FarmgenieAppState extends State<FarmgenieApp> {
   );
 
   void _showHome() {
-    if (mounted) setState(() => _screen = _faceHome());
+    if (!mounted) return;
+    setState(() {
+      _signedIn = true;
+      _screen = _faceHome();
+    });
   }
 
   void _showLogin() {
-    if (mounted) setState(() => _screen = LoginScreen(onLoggedIn: _showHome));
+    if (!mounted) return;
+    // Close pushed pages (e.g. Profile) and dialogs left over from the session.
+    _navigatorKey.currentState?.popUntil((route) => route.isFirst);
+    setState(() {
+      _signedIn = false;
+      _screen = LoginScreen(onLoggedIn: _showHome);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'Farmgenie',
       theme: farmgenieTheme(),
@@ -101,6 +146,27 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
   final Set<int> _visitedPages = {0};
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
+  final _materialRequestKey = GlobalKey<ErpWebViewScreenState>();
+  final _salesDashboardKey = GlobalKey<ErpWebViewScreenState>();
+
+  /// System back: close the drawer, step back in WebView history, or return
+  /// to Home. Only the Home tab lets back leave the app.
+  Future<void> _handleSystemBack() async {
+    final scaffold = _scaffoldKey.currentState;
+    if (scaffold != null && scaffold.isDrawerOpen) {
+      scaffold.closeDrawer();
+      return;
+    }
+    final index = _index;
+    final webView = switch (index) {
+      2 => _materialRequestKey.currentState,
+      4 => _salesDashboardKey.currentState,
+      _ => null,
+    };
+    if (webView != null && await webView.goBack()) return;
+    if (mounted && _index == index) _selectPage(0);
+  }
 
   void _selectPage(int index) {
     setState(() {
@@ -162,16 +228,17 @@ class _HomeScreenState extends State<HomeScreen> {
           ? const AttendanceScreen(recordsOnly: true)
           : const SizedBox.shrink(),
       _visitedPages.contains(2)
-          ? const MaterialRequestScreen()
+          ? MaterialRequestScreen(key: _materialRequestKey)
           : const SizedBox.shrink(),
       _visitedPages.contains(3)
           ? const LeaveRequestScreen()
           : const SizedBox.shrink(),
       _visitedPages.contains(4)
-          ? const SalesDashboardScreen()
+          ? SalesDashboardScreen(key: _salesDashboardKey)
           : const SizedBox.shrink(),
     ];
     final scaffold = Scaffold(
+      key: _scaffoldKey,
       backgroundColor: Colors.transparent,
       appBar: _index == 0
           ? AppBar(
@@ -378,7 +445,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
     );
     return PopScope(
-      canPop: !isWebView,
+      canPop: _index == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleSystemBack();
+      },
       child: BotanicalBackground(child: scaffold),
     );
   }

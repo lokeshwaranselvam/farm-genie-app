@@ -98,11 +98,42 @@ class FaceAlignment {
     FacePoint(70.7299, 92.2041),
   ];
 
+  /// Tightly packed 8-bit RGB bytes, row stride `width * 3`. A decoded JPEG
+  /// is already in this layout, so the common path reads it without copying.
+  static Uint8List rgbBytes(image.Image source) {
+    final rgb = source.format == image.Format.uint8 && !source.hasPalette
+        ? source
+        : source.convert(format: image.Format.uint8, numChannels: 3);
+    final bytes = rgb.getBytes(order: image.ChannelOrder.rgb);
+    if (bytes.length < rgb.width * rgb.height * 3) {
+      throw ArgumentError('The face image has an unsupported pixel layout.');
+    }
+    return bytes;
+  }
+
   /// [landmarks] order: image-left eye, image-right eye, nose, image-left
   /// mouth corner, image-right mouth corner. Source must already be upright.
-  static image.Image align(image.Image source, List<FacePoint> landmarks) {
+  static image.Image align(image.Image source, List<FacePoint> landmarks) =>
+      alignRgb(
+        rgbBytes(source),
+        source.width,
+        source.height,
+        landmarks,
+      );
+
+  /// [align] over packed RGB bytes (see [rgbBytes]) of a [width] by [height]
+  /// upright image. Reading bytes directly avoids per-tap pixel objects.
+  static image.Image alignRgb(
+    Uint8List rgb,
+    int width,
+    int height,
+    List<FacePoint> landmarks,
+  ) {
     if (landmarks.length != 5) {
       throw ArgumentError('Five face landmarks are required.');
+    }
+    if (width <= 0 || height <= 0 || rgb.length < width * height * 3) {
+      throw ArgumentError('The face image pixels do not match its size.');
     }
     final transform = FaceSimilarityTransform.fit(
       landmarks,
@@ -117,31 +148,28 @@ class FaceAlignment {
         final y0 = point.y.floor();
         final fx = point.x - x0;
         final fy = point.y - y0;
-        double channel(int channelIndex) {
-          double sample(int sx, int sy) {
-            if (sx < 0 || sy < 0 || sx >= source.width || sy >= source.height) {
-              return 0;
-            }
-            final pixel = source.getPixel(sx, sy);
-            return switch (channelIndex) {
-              0 => pixel.r.toDouble(),
-              1 => pixel.g.toDouble(),
-              _ => pixel.b.toDouble(),
-            };
-          }
-
-          return sample(x0, y0) * (1 - fx) * (1 - fy) +
-              sample(x0 + 1, y0) * fx * (1 - fy) +
-              sample(x0, y0 + 1) * (1 - fx) * fy +
-              sample(x0 + 1, y0 + 1) * fx * fy;
+        var red = 0.0;
+        var green = 0.0;
+        var blue = 0.0;
+        // Out-of-image taps contribute black, as before.
+        void tap(int sx, int sy, double weight) {
+          if (sx < 0 || sy < 0 || sx >= width || sy >= height) return;
+          final offset = (sy * width + sx) * 3;
+          red += rgb[offset] * weight;
+          green += rgb[offset + 1] * weight;
+          blue += rgb[offset + 2] * weight;
         }
 
+        tap(x0, y0, (1 - fx) * (1 - fy));
+        tap(x0 + 1, y0, fx * (1 - fy));
+        tap(x0, y0 + 1, (1 - fx) * fy);
+        tap(x0 + 1, y0 + 1, fx * fy);
         aligned.setPixelRgb(
           x,
           y,
-          channel(0).round().clamp(0, 255),
-          channel(1).round().clamp(0, 255),
-          channel(2).round().clamp(0, 255),
+          red.round().clamp(0, 255),
+          green.round().clamp(0, 255),
+          blue.round().clamp(0, 255),
         );
       }
     }
@@ -154,16 +182,13 @@ class FaceAlignment {
     if (aligned.width != side || aligned.height != side) {
       throw ArgumentError('SFace requires an aligned 112 by 112 image.');
     }
+    final rgb = rgbBytes(aligned);
     const planeSize = side * side;
     final result = Float32List(3 * planeSize);
-    for (var y = 0; y < side; y++) {
-      for (var x = 0; x < side; x++) {
-        final pixel = aligned.getPixel(x, y);
-        final index = y * side + x;
-        result[index] = pixel.r.toDouble();
-        result[planeSize + index] = pixel.g.toDouble();
-        result[2 * planeSize + index] = pixel.b.toDouble();
-      }
+    for (var index = 0; index < planeSize; index++) {
+      result[index] = rgb[index * 3].toDouble();
+      result[planeSize + index] = rgb[index * 3 + 1].toDouble();
+      result[2 * planeSize + index] = rgb[index * 3 + 2].toDouble();
     }
     return result;
   }

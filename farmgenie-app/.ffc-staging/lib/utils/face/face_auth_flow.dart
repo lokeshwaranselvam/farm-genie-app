@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image/image.dart' as img;
 
 import '../../screens/face_capture_page.dart';
+import '../../services/attendance_geofence.dart';
 import '../api/face_auth_api.dart';
 
 import 'package:geocoding/geocoding.dart';
@@ -131,18 +132,6 @@ class FaceAuthFlow {
     }
   }
 
-  /// Background preparation on opening Attendance. Verification still obtains
-  /// fresh ERP status; only the version-bound template/model are reused.
-  Future<void> prepare() async {
-    await Future.wait<void>([
-      _warmUp(),
-      (() async {
-        final status = await api.status();
-        if (status.enrolled) await _template(status);
-      })(),
-    ]);
-  }
-
   /// Called after login and on saved-session startup. Cancel leaves enrollment pending.
   Future<FaceEnrollmentStatus?> enroll(
     BuildContext context,
@@ -200,11 +189,33 @@ class FaceAuthFlow {
     }
     // Open the camera while a missing reference is being prepared. Its result
     // is still required before the candidate can be accepted.
-    final templateFuture = _timing.measure(
-      'reference template',
-      () => _template(status),
-    );
-    templateFuture.ignore();
+    Future<List<double>> startTemplate() {
+      final future = _timing.measure(
+        'reference template',
+        () => _template(status),
+      );
+      future.ignore();
+      return future;
+    }
+
+    var templateFuture = startTemplate();
+    var templateFailed = false;
+    // A retry inside the camera page must download again rather than await
+    // the same failed future.
+    Future<List<double>> currentTemplate() async {
+      if (templateFailed) {
+        templateFailed = false;
+        templateFuture = startTemplate();
+      }
+      final attempt = templateFuture;
+      try {
+        return await attempt;
+      } catch (_) {
+        if (identical(templateFuture, attempt)) templateFailed = true;
+        rethrow;
+      }
+    }
+
     if (!context.mounted) return null;
     double? similarity;
     DateTime? capturedOn;
@@ -223,7 +234,7 @@ class FaceAuthFlow {
         if (overlapLocationWithMatching) {
           pendingLocation = _loadLocation(refreshLocation);
         }
-        final template = await templateFuture;
+        final template = await currentTemplate();
         final embedding = await _timing.measure(
           'selfie verification',
           () => _captureEmbed(photo),
@@ -259,6 +270,10 @@ class FaceAuthFlow {
         Error.throwWithStackTrace(outcome.error!, outcome.stackTrace!);
       }
       final location = outcome.location!;
+      // Defense in depth: every refreshLocation must already reject these.
+      if (location.position.isMocked) {
+        throw StateError(AttendanceGeofence.mockedLocationMessage);
+      }
       if (!context.mounted) return null;
       await api.assertSessionUser(status.currentUser);
       final receipt = await _timing.measure(
@@ -269,6 +284,8 @@ class FaceAuthFlow {
           similarity: similarity!,
           latitude: location.position.latitude,
           longitude: location.position.longitude,
+          isMocked: location.position.isMocked,
+          accuracy: location.position.accuracy,
           capturedOn: capturedOn!,
         ),
       );
@@ -304,7 +321,7 @@ class FaceAuthFlow {
     bool Function(Position)? isAllowed,
     String restrictionMessage = 'You are outside the allowed location.',
   }) async {
-    final position = await _timing.measure(
+    Future<Position> current() => _timing.measure(
       'fresh GPS fix',
       () => Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
@@ -313,6 +330,22 @@ class FaceAuthFlow {
         ),
       ),
     );
+    var position = await current();
+    // The OS may return a cached fix; request one new fix before rejecting.
+    if (!AttendanceGeofence.isFreshFix(position.timestamp, DateTime.now())) {
+      position = await current();
+    }
+    final problem = AttendanceGeofence.fixProblem(
+      isMocked: position.isMocked,
+      timestamp: position.timestamp,
+      now: DateTime.now(),
+    );
+    if (problem != null) throw StateError(problem);
+    if (!AttendanceGeofence.isAccurateFix(position.accuracy)) {
+      throw StateError(
+        AttendanceGeofence.inaccurateLocationMessage(position.accuracy),
+      );
+    }
     if (isAllowed != null && !isAllowed(position)) {
       throw StateError(restrictionMessage);
     }

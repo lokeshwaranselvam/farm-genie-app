@@ -48,6 +48,8 @@ if office_type == "Head Office - Aalapakkam":
 
 latitude = None
 longitude = None
+address = frappe.form_dict.get("address")
+address = address.strip()[:140] if isinstance(address, str) and address.strip() else "Farmgenie Mobile"
 
 if action in ("check_in", "check_out"):
     latitude_text = frappe.form_dict.get("latitude")
@@ -72,42 +74,21 @@ user = frappe.session.user
 if not user or user == "Guest":
     frappe.throw("Login is required.")
 
-employee = frappe.db.get_value(
+# Only Employee.user_id links a login to an Employee. Email fallbacks could
+# resolve to a different person when emails are reused or mistyped.
+employees = frappe.get_all(
     "Employee",
-    {"user_id": user, "status": "Active"},
-    ["name", "employee_name", "company", "status", "department", "designation", "branch", "leave_approver", "image"],
-    as_dict=True,
+    filters={"user_id": user, "status": "Active"},
+    fields=["name", "employee_name", "company", "status", "department", "designation", "branch", "leave_approver", "image"],
+    limit_page_length=2,
 )
 
-if not employee:
-    employee = frappe.db.get_value(
-        "Employee",
-        {"company_email": user, "status": "Active"},
-        ["name", "employee_name", "company", "status", "department", "designation", "branch", "leave_approver", "image"],
-        as_dict=True,
-    )
-
-if not employee:
-    employee = frappe.db.get_value(
-        "Employee",
-        {"personal_email": user, "status": "Active"},
-        ["name", "employee_name", "company", "status", "department", "designation", "branch", "leave_approver", "image"],
-        as_dict=True,
-    )
-
-if not employee:
-    employee = frappe.db.get_value(
-        "Employee",
-        {"name": user, "status": "Active"},
-        ["name", "employee_name", "company", "status", "department", "designation", "branch", "leave_approver", "image"],
-        as_dict=True,
-    )
-
-if not employee:
+if len(employees) != 1:
     frappe.throw(
-        "No active Employee record matches the logged-in user. "
-        "Set Employee.user_id to the ERP login email, or use the Employee ID as the login user."
+        "No single active Employee record matches the logged-in user. "
+        "Set Employee.user_id to the ERP login. Contact HR."
     )
+employee = employees[0]
 
 # Only the authenticated Employee record can grant an exemption.
 # Missing custom field defaults to normal geofence enforcement.
@@ -117,11 +98,20 @@ if frappe.get_meta("Employee").has_field("custom_is_operation"):
         frappe.db.get_value("Employee", employee.name, "custom_is_operation")
     ) == 1
 
-today = frappe.utils.getdate(frappe.utils.now_datetime())
+# Serialize check-in/check-out per employee. Two concurrent requests must not
+# both see "not checked in" and insert duplicate logs.
+if action in ("check_in", "check_out"):
+    frappe.db.get_value("Employee", employee.name, "name", for_update=True)
+
+now = frappe.utils.now_datetime()
+today = frappe.utils.getdate(now)
 tomorrow = frappe.utils.add_days(today, 1)
 today_start = frappe.utils.get_datetime(str(today) + " 00:00:00")
 tomorrow_start = frappe.utils.get_datetime(str(tomorrow) + " 00:00:00")
+# An IN older than this is a forgotten check-out, not an active shift.
+max_shift_hours = 20
 
+log_fields = ["name", "log_type", "time", "latitude", "longitude", "custom_latitude", "custom_longitude", "custom_office_type"]
 logs = frappe.get_all(
     "Employee Checkin",
     filters={
@@ -130,9 +120,17 @@ logs = frappe.get_all(
     },
     # custom_office_type exists only on Employee Checkin. It is used for the
     # active check-in/check-out flow and is never queried from Attendance.
-    fields=["name", "log_type", "time", "latitude", "longitude", "custom_latitude", "custom_longitude", "custom_office_type"],
+    fields=log_fields,
     order_by="time desc, creation desc",
     limit_page_length=2,
+)
+# The open shift may have started before midnight (night shift).
+latest_rows = frappe.get_all(
+    "Employee Checkin",
+    filters={"employee": employee.name},
+    fields=log_fields,
+    order_by="time desc, creation desc",
+    limit_page_length=1,
 )
 
 if action == "calendar":
@@ -194,7 +192,7 @@ if action == "calendar":
         "data": records,
     }
 
-latest = logs[0] if logs else None
+latest = latest_rows[0] if latest_rows else None
 last_in = None
 last_out = None
 
@@ -204,8 +202,15 @@ for log in logs:
     if not last_out and log.log_type == "OUT":
         last_out = log
 
-checked_in = bool(latest and latest.log_type == "IN")
-work_completed = bool(last_in and last_out)
+checked_in = bool(
+    latest and latest.log_type == "IN"
+    and frappe.utils.time_diff_in_hours(now, latest.time) <= max_shift_hours
+)
+if checked_in:
+    # Report the open shift's IN even when it started yesterday.
+    last_in = latest
+    last_out = None
+work_completed = bool(not checked_in and last_in and last_out)
 
 # Check-out remains bound to the office in the authenticated employee's IN log.
 if action == "check_out" and not checked_in:
@@ -215,6 +220,9 @@ if action == "check_out" and checked_in:
     office_type = latest.custom_office_type or ""
     if office_type == "Head Office - Aalapakkam":
         office_type = "Head Office - Alapakkam"
+    # The shift started as Operation; a later flag change must not block checkout.
+    if office_type == "Operation":
+        is_operation = True
 
 if action in ("check_in", "check_out"):
     if not is_operation and office_type not in office_config:
@@ -275,10 +283,10 @@ if action == "check_in":
             "employee": employee.name,
             "employee_name": employee.employee_name,
             "log_type": "IN",
-            "time": frappe.utils.now_datetime(),
+            "time": now,
             "latitude": latitude,
             "longitude": longitude,
-            "device_id": frappe.form_dict.get("address") or "Farmgenie Mobile",
+            "device_id": address,
             "custom_latitude": latitude,
             "custom_longitude": longitude,
             "custom_office_type": office_type,
@@ -317,10 +325,10 @@ if action == "check_out":
             "employee": employee.name,
             "employee_name": employee.employee_name,
             "log_type": "OUT",
-            "time": frappe.utils.now_datetime(),
+            "time": now,
             "latitude": latitude,
             "longitude": longitude,
-            "device_id": frappe.form_dict.get("address") or "Farmgenie Mobile",
+            "device_id": address,
             "custom_latitude": latitude,
             "custom_longitude": longitude,
             "custom_office_type": office_type,

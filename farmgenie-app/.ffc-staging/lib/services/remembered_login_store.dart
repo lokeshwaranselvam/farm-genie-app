@@ -9,7 +9,7 @@ class RememberedLoginStore {
 
   Future<({bool remember, String username, String password})> read() async {
     final raw = await _storage.read(key: _key);
-    if (raw == null) return (remember: true, username: '', password: '');
+    if (raw == null) return (remember: false, username: '', password: '');
     final data = jsonDecode(raw) as Map<String, dynamic>;
     final remember = data['remember'] == true;
     return (

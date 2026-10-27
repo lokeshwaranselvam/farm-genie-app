@@ -364,6 +364,8 @@ class FaceAuthApi {
     required double latitude,
     required double longitude,
     required DateTime capturedOn,
+    bool isMocked = false,
+    double? accuracy,
   }) async {
     if (action != 'attendance_in' && action != 'attendance_out') {
       throw ArgumentError.value(
@@ -387,6 +389,9 @@ class FaceAuthApi {
       'blink_completed': true,
       'latitude': latitude,
       'longitude': longitude,
+      // GPS integrity for server-side storage and checks.
+      'is_mocked': isMocked,
+      if (accuracy != null && accuracy.isFinite) 'accuracy': accuracy,
       'captured_on': capturedOn.toUtc().toIso8601String(),
     });
     if (message['receipt_version'] != 2) {

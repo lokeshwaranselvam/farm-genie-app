@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:farmgenie/screens/leave_request_screen.dart';
+import 'package:farmgenie/services/farmgenie_api.dart';
 import 'package:farmgenie/screens/login_screen.dart';
 import 'package:farmgenie/screens/profile_screen.dart';
 import 'package:farmgenie/widgets/farmgenie_theme.dart';
@@ -40,10 +41,12 @@ void main() {
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({
-      'farmgenie_sid': 'preview-session',
       'farmgenie_user': 'employee@example.test',
     });
-    FlutterSecureStorage.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({
+      'farmgenie_sid': 'preview-session',
+    });
+    FarmgenieApi.resetSessionCache();
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);

@@ -1,4 +1,5 @@
 import 'package:farmgenie/screens/login_screen.dart';
+import 'package:farmgenie/services/farmgenie_api.dart';
 import 'package:farmgenie/services/remembered_login_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -21,6 +22,72 @@ void main() {
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
     SharedPreferences.setMockInitialValues({});
+    FarmgenieApi.resetSessionCache();
+  });
+
+  test('remember me is off when nothing has been stored', () async {
+    expect(
+      await RememberedLoginStore().read(),
+      (remember: false, username: '', password: ''),
+    );
+  });
+
+  test('login reads sid after other cookies and rejects Guest', () async {
+    await http.runWithClient(
+      () => FarmgenieApi.login('employee', 'secret'),
+      () => MockClient(
+        (_) async => http.Response(
+          '{}',
+          200,
+          headers: {
+            'set-cookie':
+                'system_user=yes; Path=/,sid=real-session; Path=/; HttpOnly',
+          },
+        ),
+      ),
+    );
+    expect(await FarmgenieApi.faceSessionId(), 'real-session');
+    expect(
+      await const FlutterSecureStorage().read(key: 'farmgenie_sid'),
+      'real-session',
+    );
+    expect(
+      (await SharedPreferences.getInstance()).getString('farmgenie_sid'),
+      isNull,
+    );
+    await expectLater(
+      http.runWithClient(
+        () => FarmgenieApi.login('employee', 'secret'),
+        () => MockClient(
+          (_) async => http.Response(
+            '{}',
+            200,
+            headers: {'set-cookie': 'sid=Guest; Path=/'},
+          ),
+        ),
+      ),
+      throwsA(isA<FarmgenieApiException>()),
+    );
+  });
+
+  test('legacy SharedPreferences sid moves to secure storage', () async {
+    SharedPreferences.setMockInitialValues({'farmgenie_sid': 'legacy'});
+    FarmgenieApi.resetSessionCache();
+    expect(await FarmgenieApi.faceSessionId(), 'legacy');
+    expect(
+      await const FlutterSecureStorage().read(key: 'farmgenie_sid'),
+      'legacy',
+    );
+    expect(
+      (await SharedPreferences.getInstance()).getString('farmgenie_sid'),
+      isNull,
+    );
+  });
+
+  testWidgets('first launch shows remember me unchecked', (tester) async {
+    await tester.pumpWidget(loginApp(() {}));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Checkbox>(find.byType(Checkbox)).value, isFalse);
   });
 
   test(
@@ -89,6 +156,9 @@ void main() {
         await http.runWithClient(
           () async {
             await tester.pumpWidget(loginApp(() => loggedIn = true));
+            await tester.pumpAndSettle();
+            // Remember me now defaults to off; opt in to saving credentials.
+            await tester.tap(find.byType(Checkbox));
             await tester.pumpAndSettle();
             await tester.enterText(
               find.byType(TextFormField).at(0),

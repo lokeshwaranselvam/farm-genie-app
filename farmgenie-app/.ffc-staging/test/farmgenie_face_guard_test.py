@@ -1,4 +1,5 @@
 """Mocked execution of the Farmgenie Before/After Insert receipt hooks."""
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import unittest
@@ -103,17 +104,51 @@ class FarmgenieFaceGuardTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "format has changed"):
             self.run_hook()
 
-    def test_unrelated_desk_import_paths_are_unchanged(self):
-        for command in ["frappe.desk.form.save.savedocs", "frappe.client.insert", "other.checkin", ""]:
-            self.run_hook(cmd=command, face_verification="")
+    def test_direct_inserts_outside_the_app_need_an_hr_role(self):
+        commands = ["frappe.desk.form.save.savedocs", "frappe.client.insert", "other.checkin", ""]
+        for command in commands:
+            with self.subTest(command=command), self.assertRaisesRegex(ValueError, "Genie app"):
+                self.run_hook(cmd=command, face_verification="")
             self.run_hook("attach", cmd=command, face_verification="")
-            self.assertFalse(self.metadata()["used"])
+        for role in ["HR User", "HR Manager", "System Manager"]:
+            self.api.roles = ["Employee", role]
+            for command in commands:
+                self.run_hook(cmd=command, face_verification="")
+        self.assertFalse(self.metadata()["used"])
 
     def test_status_and_calendar_do_not_consume_receipts(self):
         for action in ["status", "calendar"]:
-            self.run_hook(action=action)
+            with self.assertRaisesRegex(ValueError, "Genie app"):
+                self.run_hook(action=action)
             self.run_hook("attach", action=action)
             self.assertFalse(self.metadata()["used"])
+
+    def test_web_checkin_role_uses_mobile_checkin_without_a_receipt(self):
+        params = dict(cmd="mobile_checkin", action="checkin", log_type="IN", face_verification="")
+        with self.assertRaisesRegex(ValueError, "Complete face verification"):
+            self.run_hook(**params)
+        self.api.roles = ["Employee", "iOS User"]
+        self.run_hook(**params)
+        self.run_hook("attach", **params)
+        self.assertFalse(self.metadata()["used"])
+        self.doc.employee = "EMP-2"
+        with self.assertRaisesRegex(ValueError, "employee or action"):
+            self.run_hook(**params)
+        self.doc.employee = "EMP-1"
+        with self.assertRaisesRegex(ValueError, "Genie app"):
+            self.run_hook(cmd="frappe.client.insert", face_verification="")
+        # A receipt sent by the Android app is still verified for this role.
+        self.run_hook(cmd="mobile_checkin", action="checkin", log_type="IN")
+        self.assertTrue(self.metadata()["used"])
+
+    def test_backdated_or_future_checkin_time_is_rejected(self):
+        for minutes in [-10, 10]:
+            self.doc.time = datetime.now() + timedelta(minutes=minutes)
+            with self.subTest(minutes=minutes), self.assertRaisesRegex(ValueError, "current time"):
+                self.run_hook()
+        self.doc.time = datetime.now()
+        self.run_hook()
+        self.assertTrue(self.metadata()["used"])
 
     def test_after_insert_requires_before_insert_consumption(self):
         with self.assertRaisesRegex(ValueError, "does not belong"):
@@ -151,7 +186,8 @@ class FarmgenieFaceGuardTest(unittest.TestCase):
             self.run_hook(cmd="mobile_checkin", action="checkin", log_type="OUT")
 
     def test_mobile_status_leaves_receipt_unchanged(self):
-        self.run_hook(cmd="mobile_checkin", action="status")
+        with self.assertRaisesRegex(ValueError, "Genie app"):
+            self.run_hook(cmd="mobile_checkin", action="status")
         self.run_hook("attach", cmd="mobile_checkin", action="status")
         self.assertFalse(self.metadata()["used"])
 

@@ -131,4 +131,6 @@ Open ERPNext Desk > Server Script and update the existing record:
 1. API Method `farmgenie_employee_attendance`, using [attendance_api.py](./attendance_api.py).
 
 Allow GET and POST, keep authentication enabled, and do not expose this API
-publicly. The Employee role must be allowed to create Employee Checkin records.
+publicly. The Employee role must be allowed to create Employee Checkin records;
+the face guard (`../face/mobile_face_employee_checkin_guard.py`) blocks such
+inserts from any other path for non-HR users.

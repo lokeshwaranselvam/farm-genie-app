@@ -65,6 +65,7 @@ class MobileFaceAuthTest(unittest.TestCase):
         self.created = []
         self.events = {}
         self.error_logs = []
+        self.roles = ["Employee"]
         self.jpg = b"\xff\xd8\xff" + b"live-selfie" + b"\xff\xd9"
         self.encoded = base64.b64encode(self.jpg).decode()
         self.frappe = SimpleNamespace(
@@ -72,8 +73,9 @@ class MobileFaceAuthTest(unittest.TestCase):
             form_dict=Row(), get_doc=self.get_doc,
             get_meta=lambda doctype: SimpleNamespace(has_field=lambda field: False),
             db=SimpleNamespace(get_value=self.get_value, exists=self.exists, set_value=self.set_value),
-            log_error=self.log_error,
+            log_error=self.log_error, get_roles=lambda user=None: list(self.roles),
             utils=SimpleNamespace(
+                cint=lambda value: int(value or 0),
                 sha256_hash=lambda value: hashlib.sha256(value.encode()).hexdigest(),
                 flt=lambda value: float(value or 0),
                 now=lambda: "2026-10-12 10:00:00",
@@ -99,6 +101,8 @@ class MobileFaceAuthTest(unittest.TestCase):
 
     def get_value(self, doctype, name, fields, as_dict=False):
         if doctype == "Employee":
+            if fields == "custom_is_operation":
+                return getattr(self, "operation", 0)
             return self.user if name == "EMP-1" else "other@example.test"
         self.assertEqual(doctype, "File")
         row = self.store.get(name)
@@ -114,8 +118,8 @@ class MobileFaceAuthTest(unittest.TestCase):
             )
         return (doctype == "Event" and name in self.events) or (doctype == "Comment" and name in self.store)
 
-    def set_value(self, doctype, name, field, value):
-        self.assertEqual(doctype, "Comment")
+    def set_value(self, doctype, name, field, value, update_modified=True):
+        self.assertIn(doctype, ("Comment", "File"))
         self.store[name][field] = value
 
     def run_api(self, action="status", **params):
@@ -139,6 +143,7 @@ class MobileFaceAuthTest(unittest.TestCase):
             reference_file=reference["name"], reference_version=reference["version"],
             verification_action="attendance_in", model_version="opencv-sface-2021dec-v1",
             similarity=0.7, blink_completed=True, latitude=13.01, longitude=80.1,
+            accuracy=8.0, is_mocked=False,
             captured_on="2026-10-12T10:00:00", event="",
         )
         values.update(params)
@@ -183,7 +188,7 @@ class MobileFaceAuthTest(unittest.TestCase):
         result = self.enroll(user="other@example.test", attached_to_name="other@example.test")
         doc = self.store[result["reference_file"]["name"]]
         self.assertEqual((doc.attached_to_doctype, doc.attached_to_name, doc.owner),
-                         ("User", self.user, self.user))
+                         ("User", self.user, "Administrator"))
         self.assertEqual(doc.is_private, 1)
         self.assertEqual(doc.content, self.jpg)
         self.assertEqual(doc.decode_calls, 1)
@@ -268,6 +273,36 @@ class MobileFaceAuthTest(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "reference is invalid"):
                 self.run_api()
             doc[field] = original
+
+    def test_legacy_user_owned_reference_is_handed_to_administrator(self):
+        name = self.enroll()["reference_file"]["name"]
+        self.store[name].owner = self.user
+        self.assertTrue(self.run_api()["enrolled"])
+        self.assertEqual(self.store[name].owner, self.user)  # GET does not write.
+        self.verify()
+        self.assertEqual(self.store[name].owner, "Administrator")
+
+    def test_mocked_or_inaccurate_gps_creates_no_receipt(self):
+        self.enroll()
+        before = len(self.created)
+        cases = [({"is_mocked": True}, "mock location"), ({"is_mocked": "1"}, "mock location"),
+                 ({"is_mocked": None}, "mock location"), ({"accuracy": 120}, "too weak"),
+                 ({"accuracy": None}, "Update the app"), ({"accuracy": "nan"}, "too weak")]
+        for params, message in cases:
+            with self.subTest(params=params), self.assertRaisesRegex(ValueError, message):
+                self.verify(**params)
+        self.assertEqual(before, len(self.created))
+        metadata = json.loads(self.store[self.verify()["record_id"]].content)
+        self.assertEqual((metadata["accuracy"], metadata["is_mocked"]), (8.0, False))
+
+    def test_operation_staff_may_send_low_accuracy_gps(self):
+        self.enroll()
+        self.frappe.get_meta = lambda doctype: SimpleNamespace(has_field=lambda field: True)
+        self.operation = 1
+        self.verify(accuracy=120)
+        self.operation = 0
+        with self.assertRaisesRegex(ValueError, "too weak"):
+            self.verify(accuracy=120)
 
     def test_daily_receipt_has_no_photo_and_is_system_owned(self):
         self.enroll()

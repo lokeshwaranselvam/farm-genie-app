@@ -48,6 +48,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   Position? _lastPosition;
   String? _locationAddress;
   bool _locationLoading = false;
+  _LocationAccessException? _locationAccessError;
+  bool _locationDialogOpen = false;
   bool _calendarLoading = true;
   DateTime _calendarMonth = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime _selectedDate = DateTime.now();
@@ -119,6 +121,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     setState(() {
       _locationLoading = true;
       _lastPosition = null;
+      _locationAccessError = null;
       warningMessage = null;
     });
     try {
@@ -152,6 +155,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             ? 'Current location detected'
             : parts.join(', ');
       });
+    } on _LocationAccessException catch (error) {
+      if (mounted) {
+        _locationAccessError = error;
+        _showLocationSettings(error);
+      }
     } on FarmgenieApiException catch (error) {
       if (mounted) setState(() => warningMessage = error.message);
     } catch (_) {
@@ -162,6 +170,49 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
     } finally {
       if (mounted) setState(() => _locationLoading = false);
+    }
+  }
+
+  /// Offers the system settings screen that can actually fix the problem.
+  /// Only one such dialog is shown at a time.
+  Future<void> _showLocationSettings(_LocationAccessException error) async {
+    if (_locationDialogOpen || !mounted) return;
+    _locationDialogOpen = true;
+    try {
+      // Also safe when reported from the first location read in initState.
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      final open = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          scrollable: true,
+          icon: const Icon(Icons.location_off_outlined),
+          title: const Text('Location needed'),
+          content: Text(error.message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(
+                error.appSettings ? 'Open settings' : 'Open location settings',
+              ),
+            ),
+          ],
+        ),
+      );
+      if (open != true) return;
+      if (error.appSettings) {
+        await Geolocator.openAppSettings();
+      } else {
+        await Geolocator.openLocationSettings();
+      }
+    } catch (_) {
+      // Settings may be unavailable on some devices; the message was shown.
+    } finally {
+      _locationDialogOpen = false;
     }
   }
 
@@ -212,24 +263,38 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   Future<Position> _position() async {
     if (!await Geolocator.isLocationServiceEnabled()) {
-      throw const FarmgenieApiException(
+      throw const _LocationAccessException(
         'Turn on location services to continue.',
+        appSettings: false,
       );
     }
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
+    if (permission == LocationPermission.deniedForever) {
+      throw const _LocationAccessException(
+        'Location permission is turned off for FarmGenie. Allow location '
+        'access in app settings to mark attendance.',
+        appSettings: true,
+      );
+    }
+    if (permission == LocationPermission.denied) {
       throw const FarmgenieApiException('Location permission is required.');
     }
-    return Geolocator.getCurrentPosition(
+    Future<Position> current() => Geolocator.getCurrentPosition(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
         timeLimit: Duration(seconds: 20),
       ),
     );
+    final position = await current();
+    // The OS may hand back a cached fix. Ask once more for a new one; a fix
+    // that is still stale is rejected by _validateGeofence.
+    if (!AttendanceGeofence.isFreshFix(position.timestamp, DateTime.now())) {
+      return current();
+    }
+    return position;
   }
 
   void _validateGeofence(String office, Position position) {
@@ -241,6 +306,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         'Could not read valid GPS coordinates. Refresh location.',
       );
     }
+    // Mock and stale fixes are rejected for every user, including operation
+    // staff who are exempt from the office radius.
+    final problem = AttendanceGeofence.fixProblem(
+      isMocked: position.isMocked,
+      timestamp: position.timestamp,
+      now: DateTime.now(),
+    );
+    if (problem != null) throw FarmgenieApiException(problem);
     if (_isOperation) return;
     final distance = AttendanceGeofence.distanceMeters(
       office,
@@ -252,11 +325,36 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         'Your office location is missing or not configured. Contact HR.',
       );
     }
-    if (distance > AttendanceGeofence.radiusMeters) {
+    if (!AttendanceGeofence.isAccurateFix(position.accuracy)) {
+      throw FarmgenieApiException(
+        AttendanceGeofence.inaccurateLocationMessage(position.accuracy),
+      );
+    }
+    if (!AttendanceGeofence.isInside(distance, position.accuracy)) {
       throw FarmgenieApiException(
         'You are ${distance.round()} meters from $office. Move within ${AttendanceGeofence.radiusMeters.round()} meters to check ${_checkedIn ? 'out' : 'in'}.',
       );
     }
+  }
+
+  /// The configured office closest to the last GPS fix, if any.
+  String? _nearestOffice() {
+    final position = _lastPosition;
+    if (position == null) return null;
+    String? nearest;
+    double? best;
+    for (final office in _configuredOfficeTypes) {
+      final distance = AttendanceGeofence.distanceMeters(
+        office,
+        position.latitude,
+        position.longitude,
+      );
+      if (distance != null && (best == null || distance < best)) {
+        nearest = office;
+        best = distance;
+      }
+    }
+    return nearest;
   }
 
   Future<void> _attendanceAction() async {
@@ -280,8 +378,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'Work completed for today. You cannot check in again today.',
         );
       }
+      // ERP may not return the check-in office (null or an unconfigured
+      // name). Checkout must never dead-end on that: let the user pick the
+      // office, preselecting the nearest configured one.
+      final knownCheckInOffice =
+          _officeType != null &&
+          AttendanceGeofence.offices.containsKey(
+            AttendanceGeofence.canonicalOffice(_officeType!),
+          );
       final selectedOffice = _checkedIn
-          ? (_officeType ?? '')
+          ? (_isOperation || knownCheckInOffice
+                ? (_officeType ?? '')
+                : await _selectOfficeType(initial: _nearestOffice()))
           : _isOperation
           ? 'Operation'
           : await _selectOfficeType();
@@ -299,6 +407,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         overlapLocationWithMatching: false,
         refreshLocation: () async {
           await _refreshLocation();
+          final accessError = _locationAccessError;
+          if (accessError != null) throw accessError;
           if (!mounted || _lastPosition == null) {
             throw FarmgenieApiException(
               warningMessage ?? 'Could not read your current location.',
@@ -327,6 +437,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       );
       _applyStatus(response['data']);
       if (mounted) await _showSuccess();
+    } on _LocationAccessException catch (error) {
+      if (mounted) await _showLocationSettings(error);
     } on FarmgenieApiException catch (error) {
       if (mounted) setState(() => warningMessage = error.message);
     } on StateError catch (error) {
@@ -340,8 +452,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
   }
 
-  Future<String?> _selectOfficeType() async {
-    String? selected = _officeType;
+  Future<String?> _selectOfficeType({String? initial}) async {
+    String? selected = initial ?? _officeType;
+    if (selected != null && !_configuredOfficeTypes.contains(selected)) {
+      selected = null;
+    }
     return showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
@@ -373,9 +488,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       ),
                     ],
                   ),
-                  const Text(
-                    'Choose your check-in location to continue.',
-                    style: TextStyle(color: Color(0xFF526078), height: 1.5),
+                  Text(
+                    _checkedIn
+                        ? 'Your check-in office was not recorded. Choose the office you are checking out from.'
+                        : 'Choose your check-in location to continue.',
+                    style: const TextStyle(
+                      color: Color(0xFF526078),
+                      height: 1.5,
+                    ),
                   ),
                   const SizedBox(height: 18),
                   ..._officeTypes.map(
@@ -925,4 +1045,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       ],
     ),
   );
+}
+
+/// Location access that only a system settings screen can restore:
+/// app permission denied forever, or location services switched off.
+class _LocationAccessException extends FarmgenieApiException {
+  const _LocationAccessException(super.message, {required this.appSettings});
+
+  /// True opens app settings; false opens the device location settings.
+  final bool appSettings;
 }

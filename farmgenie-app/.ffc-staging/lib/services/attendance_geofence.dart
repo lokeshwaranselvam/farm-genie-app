@@ -5,6 +5,23 @@ class AttendanceGeofence {
   AttendanceGeofence._();
 
   static const radiusMeters = 200.0;
+
+  /// Fixes reporting a worse horizontal accuracy than this are not trusted
+  /// for a geofence decision; the user must wait for a better GPS signal.
+  static const maximumAccuracyMeters = 50.0;
+
+  /// Older fixes may be cached by the OS; a fresh one must be requested.
+  static const maximumFixAge = Duration(seconds: 30);
+
+  static const mockedLocationMessage =
+      'Turn off fake/mock location apps to mark attendance.';
+  static const staleLocationMessage =
+      'Could not get a fresh GPS fix. Refresh location and try again.';
+
+  static String inaccurateLocationMessage(double accuracy) =>
+      'Your GPS signal is too weak'
+      '${accuracy.isFinite && accuracy > 0 ? ' (about ${accuracy.round()} m)' : ''}. '
+      'Move to open sky or wait a moment for better GPS, then try again.';
   static const offices = <String, (double, double)>{
     'Head Office - Alapakkam': (13.0431622, 80.1609604),
     'Head Office - RWD GrandCorridor': (13.0570, 80.1371),
@@ -22,6 +39,35 @@ class AttendanceGeofence {
       latitude <= 90 &&
       longitude >= -180 &&
       longitude <= 180;
+
+  /// A fix older than [maximumFixAge] is stale. A timestamp ahead of the
+  /// device clock is not treated as stale (GPS time and a manually set phone
+  /// clock can disagree); the server checks capture time as well.
+  static bool isFreshFix(DateTime timestamp, DateTime now) =>
+      now.difference(timestamp) <= maximumFixAge;
+
+  /// Platforms report 0 or a negative value when accuracy is unknown.
+  static bool isAccurateFix(double accuracy) =>
+      accuracy.isFinite && accuracy > 0 && accuracy <= maximumAccuracyMeters;
+
+  /// Integrity problems that apply to every attendance fix, geofenced or not.
+  /// Returns null when the fix may be used.
+  static String? fixProblem({
+    required bool isMocked,
+    required DateTime timestamp,
+    required DateTime now,
+  }) {
+    if (isMocked) return mockedLocationMessage;
+    if (!isFreshFix(timestamp, now)) return staleLocationMessage;
+    return null;
+  }
+
+  /// Geofence decision: inside only when the fix centre is within
+  /// [radiusMeters] AND the fix is accurate to [maximumAccuracyMeters].
+  /// Accuracy is deliberately not added to or subtracted from the distance;
+  /// a coarse fix is rejected rather than given the benefit of the doubt.
+  static bool isInside(double distance, double accuracy) =>
+      distance.isFinite && distance <= radiusMeters && isAccurateFix(accuracy);
 
   static double? distanceMeters(
     String office,

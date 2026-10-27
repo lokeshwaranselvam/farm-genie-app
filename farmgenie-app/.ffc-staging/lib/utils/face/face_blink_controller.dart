@@ -1,14 +1,23 @@
-/// A blink challenge checks live eye motion, not biometric identity or replay
-/// resistance. Recognition of the captured photo is a separate required step.
+import 'dart:math' as math;
+
+/// A blink followed by a randomly chosen head turn checks live motion of one
+/// tracked face. The unpredictable direction makes a pre-recorded blink video
+/// insufficient. It is not biometric identity; recognition of the captured
+/// photo is a separate required step.
 enum FaceBlinkStage {
   positionFace,
   openEyes,
   blink,
   reopenEyes,
   holdStill,
+  turnHead,
+  returnCenter,
   ready,
   timedOut,
 }
+
+/// Direction from the person's own point of view, as told to them on screen.
+enum FaceTurnDirection { left, right }
 
 class FaceBlinkConfig {
   const FaceBlinkConfig({
@@ -24,6 +33,10 @@ class FaceBlinkConfig {
     this.minimumFaceFraction = 0.25,
     this.maximumCenterOffset = 0.28,
     this.minimumBrightness = 35,
+    this.headTurn = true,
+    this.turnAngle = 20,
+    this.centerAngle = 10,
+    this.turnTimeout = const Duration(seconds: 6),
   });
 
   final double openProbability;
@@ -38,10 +51,28 @@ class FaceBlinkConfig {
   final double minimumFaceFraction;
   final double maximumCenterOffset;
   final double minimumBrightness;
+
+  /// Require the random head-turn challenge after the blink.
+  final bool headTurn;
+
+  /// Yaw, in degrees, the head must reach toward the requested side.
+  final double turnAngle;
+
+  /// Yaw, in degrees, below which the head counts as back at center.
+  final double centerAngle;
+
+  /// Time allowed from the turn instruction to returning to center.
+  final Duration turnTimeout;
 }
 
 /// Coordinates and brightness are normalized by the camera adapter. Timestamps
 /// come from a monotonic clock, never the device's wall clock.
+///
+/// [yaw] is ML Kit's `headEulerAngleY` for the analysed (unmirrored) camera
+/// frame: positive when the face turns toward the right side of that image,
+/// which is the person's own LEFT (the camera faces them). The on-screen
+/// front-camera preview is mirrored, so the person sees their head move to
+/// the screen's left as well. Negative yaw is the person's own RIGHT.
 class FaceBlinkSample {
   const FaceBlinkSample({
     required this.faceCount,
@@ -76,9 +107,17 @@ class FaceBlinkProgress {
 }
 
 class FaceBlinkController {
-  FaceBlinkController({this.config = const FaceBlinkConfig()});
+  FaceBlinkController({
+    this.config = const FaceBlinkConfig(),
+    FaceTurnDirection Function()? chooseDirection,
+  }) : _chooseDirection = chooseDirection ?? _secureDirection;
+
+  static final _random = math.Random.secure();
+  static FaceTurnDirection _secureDirection() =>
+      _random.nextBool() ? FaceTurnDirection.left : FaceTurnDirection.right;
 
   final FaceBlinkConfig config;
+  final FaceTurnDirection Function() _chooseDirection;
   FaceBlinkProgress _progress = const FaceBlinkProgress(
     FaceBlinkStage.positionFace,
     'Place your face inside the guide.',
@@ -89,12 +128,24 @@ class FaceBlinkController {
   int? _trackingId;
   int _openCount = 0;
   int _reopenedCount = 0;
+  FaceTurnDirection? _turnDirection;
+  Duration? _turnStarted;
+  bool _turnReached = false;
+  Duration? _readyAt;
 
   FaceBlinkProgress get progress => _progress;
+
+  /// The requested direction while the head-turn challenge is active.
+  FaceTurnDirection? get turnDirection => _turnDirection;
+
+  /// Timestamp of the tracked frame that completed the challenge. The final
+  /// photo must be taken promptly after it.
+  Duration? get readyAt => _progress.canCapture ? _readyAt : null;
 
   void reset(Duration timestamp) {
     _started = timestamp;
     _lastFrame = null;
+    _readyAt = null;
     _clearBlink();
     _progress = const FaceBlinkProgress(
       FaceBlinkStage.positionFace,
@@ -110,6 +161,9 @@ class FaceBlinkController {
         FaceBlinkStage.timedOut,
         'Scan timed out. Face the camera in good light, then try again.',
       );
+    } else if (_turnStarted != null &&
+        timestamp - _turnStarted! > config.turnTimeout) {
+      _reject('Turn your head when asked, then look straight. Start again.');
     }
     return _progress;
   }
@@ -130,6 +184,8 @@ class FaceBlinkController {
         'Keep your eyes open and look straight.',
       );
     }
+
+    if (_turnDirection != null) return _observeTurn(sample, timestamp);
 
     final qualityError = _qualityError(sample);
     if (qualityError != null) return _reject(qualityError);
@@ -155,10 +211,15 @@ class FaceBlinkController {
         }
         _reopenedCount++;
         if (_reopenedCount >= config.reopenedFrames) {
-          _progress = const FaceBlinkProgress(
-            FaceBlinkStage.ready,
-            'Blink detected. Capturing your selfie…',
-          );
+          if (config.headTurn) {
+            _startTurn(timestamp);
+          } else {
+            _readyAt = timestamp;
+            _progress = const FaceBlinkProgress(
+              FaceBlinkStage.ready,
+              'Blink detected. Capturing your selfie…',
+            );
+          }
         } else {
           _progress = const FaceBlinkProgress(
             FaceBlinkStage.holdStill,
@@ -202,7 +263,68 @@ class FaceBlinkController {
     return _progress;
   }
 
-  String? _qualityError(FaceBlinkSample sample) {
+  void _startTurn(Duration timestamp) {
+    _closedAt = null;
+    _turnDirection = _chooseDirection();
+    _turnStarted = timestamp;
+    _turnReached = false;
+    _progress = FaceBlinkProgress(
+      FaceBlinkStage.turnHead,
+      _turnDirection == FaceTurnDirection.left
+          ? 'Now slowly turn your head to your LEFT.'
+          : 'Now slowly turn your head to your RIGHT.',
+    );
+  }
+
+  /// The turn must come from the same tracked face as the blink, reach
+  /// [FaceBlinkConfig.turnAngle] toward the requested side, then return within
+  /// [FaceBlinkConfig.centerAngle] with eyes open before
+  /// [FaceBlinkStage.ready].
+  FaceBlinkProgress _observeTurn(FaceBlinkSample sample, Duration timestamp) {
+    final qualityError = _qualityError(sample, turning: true);
+    if (qualityError != null) return _reject(qualityError);
+    if (sample.trackingId != _trackingId) {
+      return _reject('Keep the same face inside the guide and start again.');
+    }
+    // Positive when the head is turned toward the requested side.
+    final toward = _turnDirection == FaceTurnDirection.left
+        ? sample.yaw!
+        : -sample.yaw!;
+    if (toward <= -config.turnAngle) {
+      return _reject(
+        'You turned the other way. Start again and follow the prompt.',
+      );
+    }
+    if (!_turnReached) {
+      if (toward >= config.turnAngle) {
+        _turnReached = true;
+        _progress = const FaceBlinkProgress(
+          FaceBlinkStage.returnCenter,
+          'Now look straight at the camera.',
+        );
+      }
+      return _progress;
+    }
+    final centered =
+        sample.yaw!.abs() < config.centerAngle &&
+        _qualityError(sample) == null &&
+        sample.leftEyeOpen! >= config.openProbability &&
+        sample.rightEyeOpen! >= config.openProbability;
+    if (centered) {
+      _turnDirection = null;
+      _turnStarted = null;
+      _readyAt = timestamp;
+      _progress = const FaceBlinkProgress(
+        FaceBlinkStage.ready,
+        'Done. Capturing your selfie…',
+      );
+    }
+    return _progress;
+  }
+
+  /// While [turning], a large yaw and closed or unclear eyes are expected;
+  /// face count, tracking, light, size, position and pitch still apply.
+  String? _qualityError(FaceBlinkSample sample, {bool turning = false}) {
     if (sample.faceCount == 0) return 'Place your face inside the guide.';
     if (sample.faceCount != 1) {
       return 'Only one person should be in the camera.';
@@ -226,10 +348,11 @@ class FaceBlinkController {
         sample.pitch == null ||
         !sample.yaw!.isFinite ||
         !sample.pitch!.isFinite ||
-        sample.yaw!.abs() > config.maximumHeadAngle ||
+        (!turning && sample.yaw!.abs() > config.maximumHeadAngle) ||
         sample.pitch!.abs() > config.maximumHeadAngle) {
       return 'Look straight at the camera.';
     }
+    if (turning) return null;
     if (sample.leftEyeOpen == null ||
         sample.rightEyeOpen == null ||
         !sample.leftEyeOpen!.isFinite ||
@@ -254,5 +377,8 @@ class FaceBlinkController {
     _closedAt = null;
     _openCount = 0;
     _reopenedCount = 0;
+    _turnDirection = null;
+    _turnStarted = null;
+    _turnReached = false;
   }
 }

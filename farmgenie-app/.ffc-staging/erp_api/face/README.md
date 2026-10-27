@@ -34,7 +34,7 @@ this port does not change its quantization or matching threshold:
 - Android uses the reference `1.28.0-sface1` runtime under `android/runtime-maven`.
 - Preserve the accompanying model/runtime license files when distributing.
 
-## Install the three restricted Server Scripts
+## Install the four restricted Server Scripts
 
 These files are **restricted Frappe Server Script bodies**, not importable custom
 app modules. Paste each complete file into ERP Desk > Server Script. No imports,
@@ -47,6 +47,20 @@ do not leave duplicate receipt guards enabled.
 | [mobile_face_auth.py](./mobile_face_auth.py) | API | `mobile_face_auth` | - |
 | [mobile_face_employee_checkin_guard.py](./mobile_face_employee_checkin_guard.py) | DocType Event | `Employee Checkin` | Before Insert |
 | [mobile_face_employee_checkin_attach.py](./mobile_face_employee_checkin_attach.py) | DocType Event | `Employee Checkin` | After Insert |
+| [mobile_face_reference_protect.py](./mobile_face_reference_protect.py) | DocType Event | `File` | Before Delete |
+
+Who may create Employee Checkin records once the guard is enabled:
+
+- **Genie app** (`mobile_checkin`, `farmgenie_employee_attendance`): requires a
+  face receipt, the user's own Employee (`Employee.user_id`) and the current time.
+- **Web check-in page** (`mobile_checkin` without a receipt): only users with the
+  `iOS User` role; still bound to their own Employee and the current time.
+- **Anything else** (REST `/api/resource`, Desk form, Data Import, biometric
+  device sync): only Administrator, System Manager, HR Manager or HR User. Give
+  a biometric integration user the HR User role.
+
+`record_verification` also requires `accuracy` (≤ 50 m) and `is_mocked=false`
+from the app; older app builds must be updated.
 
 Keep Allow Guest disabled. Enable API rate limiting, for example 60 requests per
 60 seconds. Server Scripts must already be enabled by the site administrator.
@@ -185,8 +199,10 @@ reference design. ERP validates receipt ownership and lifecycle; it does not
 independently run SFace or establish that a modified client really blinked.
 Do not describe this as server-verified biometric identity or strong anti-spoofing.
 Enrollment lets the signed-in account choose its first reference face.
-An authorized administrator must deliberately remove the account's private
-`GENIE-FACE-REF-...` File to reset enrollment; the app offers no self-reset.
+Reference Files are owned by Administrator (older user-owned ones are migrated
+on the next verification) and `mobile_face_reference_protect` blocks deletion
+except by System Manager / HR Manager, so an employee cannot reset their own
+enrollment and register another face.
 
 The reference implementation is native Android/iOS. Browser/PWA face capture is
 not provided by these native ML Kit/ONNX files. iOS needs a Mac/device build and

@@ -7,7 +7,9 @@
 #
 # Install with mobile_face_auth after every mobile client is updated. This
 # protects farmgenie_employee_attendance check_in/check_out when they use normal
-# Employee Checkin.insert(). It leaves ERP Desk/manual/import flows unchanged.
+# Employee Checkin.insert(). Any other insert path (REST /api/resource, Desk,
+# frappe.client.insert) is allowed only for Administrator and the HR roles below.
+# Users with the web check-in role may use mobile_checkin without a face receipt.
 # Methods using direct DB writes must call equivalent validation themselves.
 # The receipt verifies submission/audit linkage, not a client AI assertion.
 # Also protects mobile_checkin action=checkin, log_type=IN/OUT.
@@ -15,7 +17,11 @@
 command = str(frappe.form_dict.get("cmd") or "")
 expected_action = None
 expected_log_type = None
-# Only Farmgenie's existing API insert path is guarded. Desk/import paths remain unchanged.
+current_user = frappe.session.user
+# Desk, data import and biometric-device integrations need one of these roles.
+checkin_admin_roles = ("System Manager", "HR Manager", "HR User")
+# The web check-in page has no camera/face scan; it calls mobile_checkin.
+web_checkin_role = "iOS User"
 if command == "farmgenie_employee_attendance":
     requested_action = str(frappe.form_dict.get("action") or "").strip().lower()
     if requested_action == "check_in":
@@ -30,18 +36,32 @@ elif command == "mobile_checkin" and str(frappe.form_dict.get("action") or "stat
         frappe.throw("The attendance action is invalid.")
     expected_action = "attendance_in" if expected_log_type == "IN" else "attendance_out"
 
-if expected_action:
-    include_timings = frappe.form_dict.get("include_timings") in [True, 1, "1", "true"]
-    guard_started = frappe.utils.now_datetime() if include_timings else None
-    current_user = frappe.session.user
+roles = frappe.get_roles(current_user) if current_user else []
+if not expected_action:
+    # Without this, any employee could POST /api/resource/Employee Checkin with
+    # any time, GPS or employee and skip the face and geofence checks.
+    if current_user != "Administrator" and not any(role in roles for role in checkin_admin_roles):
+        frappe.throw("Mark attendance from the Genie app or the web check-in page.")
+else:
     if not current_user or current_user == "Guest":
         frappe.throw("Sign in before checking in or out.")
-    employee = frappe.db.get_value("Employee", doc.employee,
-        ["name", "user_id", "company_email", "personal_email", "status"], as_dict=True)
-    if (not employee or employee.status != "Active"
-        or current_user not in (employee.name, employee.user_id, employee.company_email, employee.personal_email)
+    # Only Employee.user_id links a login to an Employee; email fallbacks could
+    # resolve to a different person.
+    employee = frappe.db.get_value("Employee", doc.employee, ["name", "user_id", "status"], as_dict=True)
+    if (not employee or employee.status != "Active" or employee.user_id != current_user
         or doc.log_type != expected_log_type):
-        frappe.throw("The attendance employee or action does not match your face scan.")
+        frappe.throw("The attendance employee or action does not match your account.")
+    # Attendance is recorded for the current moment only; no backdating.
+    if doc.time and abs(frappe.utils.time_diff_in_seconds(frappe.utils.now_datetime(), doc.time)) > 300:
+        frappe.throw("The attendance time must be the current time.")
+web_checkin = bool(
+    expected_action and command == "mobile_checkin" and web_checkin_role in roles
+    and not frappe.form_dict.get("face_verification")
+)
+
+if expected_action and not web_checkin:
+    include_timings = frappe.form_dict.get("include_timings") in [True, 1, "1", "true"]
+    guard_started = frappe.utils.now_datetime() if include_timings else None
     record_id = frappe.form_dict.get("face_verification")
     if not isinstance(record_id, str):
         frappe.throw("Complete face verification before checking in or out.")
@@ -99,7 +119,7 @@ if expected_action:
         "File", reference_id, ["owner", "is_private", "attached_to_doctype", "attached_to_name", "content_hash"], as_dict=True,
     )
     if (
-        not reference or reference.owner != current_user or not reference.is_private
+        not reference or reference.owner != "Administrator" or not reference.is_private
         or reference.attached_to_doctype != "User" or reference.attached_to_name != current_user
         or metadata.get("reference_file") != reference_id
         or metadata.get("reference_version") != (reference.content_hash or reference_id)
