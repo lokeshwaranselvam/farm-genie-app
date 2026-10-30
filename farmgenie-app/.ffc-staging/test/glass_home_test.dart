@@ -236,7 +236,13 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await dismissWarnings(tester);
-    expect(find.text('Sales Dashboard'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(Drawer),
+        matching: find.text('Sales Dashboard'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(
       find.descendant(
         of: find.byType(Drawer),

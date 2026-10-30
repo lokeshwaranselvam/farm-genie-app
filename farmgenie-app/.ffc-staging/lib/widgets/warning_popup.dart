@@ -6,17 +6,32 @@ import 'geofence_warning_dialog.dart';
 class WarningPopup {
   static final _queues = Expando<_WarningQueue>();
 
+  /// Runs [present] once earlier warnings have closed, so other dialogs (such
+  /// as the location settings prompt) never stack on top of a warning.
+  static Future<T?> enqueue<T>(
+    BuildContext context,
+    Future<T?> Function() present,
+  ) {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final queue = _queues[navigator] ??= _WarningQueue();
+    final result = queue.tail.then((_) async {
+      // Also safe for errors reported during initState or a state update.
+      WidgetsBinding.instance.scheduleFrame();
+      await WidgetsBinding.instance.endOfFrame;
+      if (!context.mounted || !navigator.mounted) return null;
+      return present();
+    });
+    queue.tail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+
   static Future<void> show(BuildContext context, String message) {
     if (!context.mounted || message.trim().isEmpty) return Future.value();
     final navigator = Navigator.of(context, rootNavigator: true);
     final queue = _queues[navigator] ??= _WarningQueue();
     final pending = queue.pending[message];
     if (pending != null) return pending;
-    final result = queue.tail.then((_) async {
-      // Also safe for errors reported during initState or a state update.
-      WidgetsBinding.instance.scheduleFrame();
-      await WidgetsBinding.instance.endOfFrame;
-      if (!context.mounted || !navigator.mounted) return;
+    final result = enqueue<void>(context, () async {
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
@@ -41,7 +56,6 @@ class WarningPopup {
       queue.pending.remove(message);
     });
     queue.pending[message] = completed;
-    queue.tail = completed;
     return completed;
   }
 }

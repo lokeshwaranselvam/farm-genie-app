@@ -7,12 +7,12 @@ ThemeData farmgenieTheme() {
   final scheme = ColorScheme.fromSeed(
     seedColor: forestGreen,
     primary: forestGreen,
-    surface: const Color(0xFFF0FFF8),
-    onSurface: const Color(0xFF203831),
+    surface: pageBackground,
+    onSurface: homeInk,
   );
   final shape = RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(21),
-    side: const BorderSide(color: Colors.white, width: 1.8),
+    borderRadius: BorderRadius.circular(14),
+    side: const BorderSide(color: cardBorder),
   );
   return ThemeData(
     useMaterial3: true,
@@ -25,43 +25,43 @@ ThemeData farmgenieTheme() {
       elevation: 0,
     ),
     cardTheme: CardThemeData(
-      color: const Color(0xCFFFFFFF),
+      color: Colors.white,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       shape: shape,
     ),
     dialogTheme: DialogThemeData(
-      backgroundColor: const Color(0xF0EEFFF6),
+      backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
       shape: shape,
     ),
     bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: const Color(0xF0EEFFF6),
+      backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
       shape: shape,
     ),
     drawerTheme: const DrawerThemeData(
-      backgroundColor: Color(0xF0E6FFF2),
+      backgroundColor: sidebarGreen,
       surfaceTintColor: Colors.transparent,
     ),
     navigationBarTheme: const NavigationBarThemeData(
-      backgroundColor: Color(0xBDFFFFFF),
+      backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
-      indicatorColor: Color(0xFFC5F5DE),
+      indicatorColor: iconTint,
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: const Color(0x99FFFFFF),
+      fillColor: Colors.white,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: Color(0xFFBDDFCF)),
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: cardBorder),
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: forestGreen,
         foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(21)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     ),
     progressIndicatorTheme: const ProgressIndicatorThemeData(

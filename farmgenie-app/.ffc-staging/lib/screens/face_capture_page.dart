@@ -16,8 +16,8 @@ import '../utils/face/face_blink_controller.dart';
 import '../utils/face/face_image_quality.dart';
 import '../utils/face/face_performance_trace.dart';
 
-/// Returns a raw JPEG only after one continuous blink, a random head turn by
-/// the same tracked face and a clear eyes-open photo taken right after it.
+/// Returns a raw JPEG only after one continuous blink by the same tracked face
+/// and a clear eyes-open photo taken right after it.
 /// [validateCapture] returns null to accept, or guidance to retry.
 class FaceCapturePage extends StatefulWidget {
   const FaceCapturePage({
@@ -45,7 +45,10 @@ class _FaceCapturePageState extends State<FaceCapturePage>
   /// The final photo must be taken this soon after the last tracked frame
   /// that completed the liveness challenge, so it cannot be swapped.
   static const _maximumCaptureDelay = Duration(milliseconds: 1500);
-  final _blink = FaceBlinkController();
+  // Blink-only liveness: no head-turn step for enrollment or attendance.
+  final _blink = FaceBlinkController(
+    config: const FaceBlinkConfig(headTurn: false),
+  );
   final _clock = Stopwatch()..start();
   static const _timing = FacePerformanceTrace();
   // Classification is needed for eye-open probabilities. Landmarks are not
@@ -316,7 +319,8 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         WarningPopup.show(context, progress.instruction);
       }
       if (progress.canCapture) await _captureSelfie(session);
-    } catch (_) {
+    } catch (error, stack) {
+      debugPrint('[Face scan] frame failed: $error\n$stack');
       if (_validSession(session) && ++_detectorFailures >= 3) {
         _showError('The face scan could not run. Please try again.');
       }
@@ -401,10 +405,8 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       // one face is then required in it: below, or by the embedding service
       // when the callback validates the photo.
       final readyAt = _blink.readyAt;
-      if (readyAt == null ||
-          _clock.elapsed - readyAt > _maximumCaptureDelay) {
-        error =
-            'Hold still facing the camera after turning back, and try again.';
+      if (readyAt == null || _clock.elapsed - readyAt > _maximumCaptureDelay) {
+        error = 'Hold still facing the camera after your blink, and try again.';
       } else if (!widget.validatePhotoInCallback ||
           widget.validateCapture == null) {
         final faces = await _detector.processImage(
@@ -451,7 +453,8 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         _completed = true;
         Navigator.of(context).pop<File>(photo);
       }
-    } catch (_) {
+    } catch (error, stack) {
+      debugPrint('[Face scan] selfie check failed: $error\n$stack');
       if (_validSession(session)) {
         setState(
           () =>
@@ -580,8 +583,8 @@ class _FaceCapturePageState extends State<FaceCapturePage>
                     ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Blink, then turn your head the way shown. The camera '
-                    'takes your selfie automatically.',
+                    'Look straight and blink once. The camera takes your '
+                    'selfie automatically.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Color(0xFF667085), height: 1.4),
                   ),

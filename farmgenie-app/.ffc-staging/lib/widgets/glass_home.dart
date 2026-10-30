@@ -1,21 +1,27 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
-const forestGreen = Color(0xFF005B46);
-const homeSecondary = Color(0xFF496171);
+const forestGreen = Color(0xFF17633A);
+const sidebarGreen = Color(0xFF0F4A2C);
+const sidebarSelected = Color(0xFF1F7A48);
+const homeSecondary = Color(0xFF5B6B62);
+const homeInk = Color(0xFF17251C);
+const pageBackground = Color(0xFFF4F7F3);
+const cardBorder = Color(0xFFE2EAE3);
+const iconTint = Color(0xFFE6F2E8);
 
 Duration _motion(BuildContext context) =>
     MediaQuery.disableAnimationsOf(context)
     ? Duration.zero
     : const Duration(milliseconds: 220);
 
+/// White dashboard card. [blur] and [opacity] are kept for existing callers
+/// from the earlier glass style and no longer change the surface.
 class FarmgenieGlassCard extends StatelessWidget {
   const FarmgenieGlassCard({
     super.key,
     required this.child,
     this.padding = EdgeInsets.zero,
-    this.radius = 21,
+    this.radius = 14,
     this.blur = 0,
     this.opacity = .54,
   });
@@ -23,51 +29,54 @@ class FarmgenieGlassCard extends StatelessWidget {
   final EdgeInsetsGeometry padding;
   final double radius, blur, opacity;
 
+  // A Material surface, so ListTiles and ink splashes inside stay visible.
   @override
-  Widget build(BuildContext context) {
-    final surface = DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          stops: const [0, .48, 1],
-          colors: [
-            Colors.white.withValues(alpha: (opacity + .22).clamp(0, 1)),
-            Colors.white.withValues(alpha: (opacity - .10).clamp(0, 1)),
-            const Color(0xFFE0F8F0).withValues(alpha: opacity),
-          ],
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(radius),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x0F0F3D24),
+          blurRadius: 12,
+          offset: Offset(0, 4),
         ),
+      ],
+    ),
+    child: Material(
+      color: Colors.white,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: .98),
-          width: 1.8,
-        ),
+        side: const BorderSide(color: cardBorder),
       ),
       child: Padding(padding: padding, child: child),
-    );
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(radius),
-        boxShadow: [
-          BoxShadow(color: Colors.white.withValues(alpha: .3), spreadRadius: 1),
-          BoxShadow(
-            color: forestGreen.withValues(alpha: .10),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
-        child: blur > 0
-            ? BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                child: surface,
-              )
-            : surface,
-      ),
-    );
-  }
+    ),
+  );
+}
+
+/// Rounded square behind a dashboard icon, as on the stat cards.
+class FarmgenieIconTile extends StatelessWidget {
+  const FarmgenieIconTile({
+    super.key,
+    required this.icon,
+    this.color = forestGreen,
+    this.background = iconTint,
+    this.size = 44,
+  });
+  final IconData icon;
+  final Color color, background;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      color: background,
+      borderRadius: BorderRadius.circular(size * .27),
+    ),
+    child: Icon(icon, color: color, size: size * .56),
+  );
 }
 
 class FarmgenieHomeEntrance extends StatelessWidget {
@@ -98,40 +107,17 @@ class BotanicalBackground extends StatelessWidget {
   final bool enabled;
 
   @override
-  Widget build(BuildContext context) => Stack(
-    fit: StackFit.expand,
-    children: [
-      if (enabled) ...[
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFFF4FFFC), Color(0xFFD9FAE9), Color(0xFFE9FFF6)],
-              stops: [0, .55, 1],
-            ),
-          ),
-        ),
-        const Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(.8, -.8),
-                radius: 1.2,
-                colors: [Color(0x504CECA0), Color(0x00FFFFFF)],
-              ),
-            ),
-          ),
-        ),
-      ],
-      child,
-    ],
-  );
+  Widget build(BuildContext context) =>
+      enabled ? ColoredBox(color: pageBackground, child: child) : child;
 }
 
 /// Reuses the original mark; the crop only lays out the existing brand horizontally.
 class FarmgenieHomeWordmark extends StatelessWidget {
-  const FarmgenieHomeWordmark({super.key});
+  const FarmgenieHomeWordmark({super.key, this.light = false});
+
+  /// White text for the dark-green navigation drawer.
+  final bool light;
+
   @override
   Widget build(BuildContext context) => Semantics(
     label: 'Farmgenie. From Earth to Heart',
@@ -159,8 +145,8 @@ class FarmgenieHomeWordmark extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 5),
-          const Flexible(
+          const SizedBox(width: 6),
+          Flexible(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -169,7 +155,7 @@ class FarmgenieHomeWordmark extends StatelessWidget {
                   'Farmgenie',
                   maxLines: 1,
                   style: TextStyle(
-                    color: forestGreen,
+                    color: light ? Colors.white : forestGreen,
                     fontWeight: FontWeight.w900,
                     fontSize: 18,
                     letterSpacing: -.5,
@@ -178,7 +164,12 @@ class FarmgenieHomeWordmark extends StatelessWidget {
                 Text(
                   'From Earth to Heart',
                   maxLines: 1,
-                  style: TextStyle(color: Color(0xFF64923C), fontSize: 8.5),
+                  style: TextStyle(
+                    color: light
+                        ? const Color(0xFFB7E4C7)
+                        : const Color(0xFF64923C),
+                    fontSize: 8.5,
+                  ),
                 ),
               ],
             ),
@@ -189,6 +180,7 @@ class FarmgenieHomeWordmark extends StatelessWidget {
   );
 }
 
+/// Page header: greeting, employee name and today's attendance line.
 class FarmgenieGreetingCard extends StatelessWidget {
   const FarmgenieGreetingCard({
     super.key,
@@ -201,69 +193,44 @@ class FarmgenieGreetingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final hour = DateTime.now().hour;
     final greeting = hour < 12
-        ? 'GOOD MORNING,'
+        ? 'Good morning'
         : hour < 17
-        ? 'GOOD AFTERNOON,'
-        : 'GOOD EVENING,';
-    return FarmgenieGlassCard(
-      opacity: .3,
-      child: Stack(
+        ? 'Good afternoon'
+        : 'Good evening';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0x40F4FFF9),
-                    Color(0x6562E895),
-                    Color(0x5575DEBC),
-                  ],
-                ),
-              ),
+          Text(
+            greeting,
+            style: const TextStyle(
+              color: forestGreen,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 19, 18, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  greeting,
-                  style: const TextStyle(
-                    color: Color(0xFF57747A),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 2.1,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  '$name \u{1F44B}',
-                  style: const TextStyle(
-                    color: forestGreen,
-                    fontSize: 34,
-                    height: 1.12,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -.8,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                FractionallySizedBox(
-                  alignment: Alignment.centerLeft,
-                  widthFactor: .70,
-                  child: Text(
-                    checkedIn ? 'Have a productive day!\nYou are checked in.' : 'Manage your attendance, material requests and daily work with Farmgenie.',
-                    style: const TextStyle(
-                      color: homeSecondary,
-                      fontSize: 13.5,
-                      height: 1.3,
-                    ),
-                  ),
-                ),
-              ],
+          const SizedBox(height: 4),
+          Text(
+            name,
+            style: const TextStyle(
+              color: homeInk,
+              fontSize: 26,
+              height: 1.15,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -.5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            checkedIn
+                ? 'You are checked in. Have a productive day!'
+                : 'Your attendance and daily work at a glance.',
+            style: const TextStyle(
+              color: homeSecondary,
+              fontSize: 14,
+              height: 1.35,
             ),
           ),
         ],
@@ -287,126 +254,88 @@ class FarmgenieAttendanceStatusCard extends StatelessWidget {
   final String title, description, checkInTime, checkOutTime;
   @override
   Widget build(BuildContext context) {
-    final color = checkedIn || completed
-        ? const Color(0xFF16B86A)
-        : const Color(0xFFFFA447);
+    final done = checkedIn || completed;
+    final color = done ? const Color(0xFF1E8A4C) : const Color(0xFFB86A00);
     return FarmgenieGlassCard(
-      padding: const EdgeInsets.all(12),
-      child: Stack(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Column(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 0),
-                    child: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: color.withValues(alpha: .07),
-                      ),
-                      child: Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: color.withValues(alpha: .13),
-                        ),
-                        child: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              colors: [color, color.withValues(alpha: .72)],
-                            ),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: .65),
-                            ),
-                          ),
-                          child: Icon(
-                            checkedIn || completed
-                                ? Icons.check_circle_outline_rounded
-                                : Icons.schedule_rounded,
-                            color: Colors.white,
-                            size: 28,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Attendance Status',
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF394E60),
-                          ),
-                        ),
-                        const SizedBox(height: 7),
-                        AnimatedSwitcher(
-                          duration: _motion(context),
-                          child: Align(
-                            key: ValueKey(title),
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              title,
-                              style: TextStyle(
-                                fontSize: 20,
-                                height: 1.2,
-                                fontWeight: FontWeight.w900,
-                                color: checkedIn || completed
-                                    ? forestGreen
-                                    : const Color(0xFF98501D),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          description,
-                          style: const TextStyle(
-                            color: homeSecondary,
-                            fontWeight: FontWeight.w400,
-                            fontSize: 13,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+              FarmgenieIconTile(
+                icon: done
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.schedule_rounded,
+                color: color,
+                background: done ? iconTint : const Color(0xFFFFF3DF),
               ),
-              if (loading)
-                const Padding(
-                  padding: EdgeInsets.only(top: 10),
-                  child: LinearProgressIndicator(minHeight: 2),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Attendance Status',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: homeSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    AnimatedSwitcher(
+                      duration: _motion(context),
+                      child: Align(
+                        key: ValueKey(title),
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 19,
+                            height: 1.2,
+                            fontWeight: FontWeight.w800,
+                            color: done ? forestGreen : const Color(0xFF8A4B00),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: const TextStyle(
+                        color: homeSecondary,
+                        fontSize: 13,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
                 ),
-              const SizedBox(height: 13),
-              Row(
-                children: [
-                  Expanded(
-                    child: FarmgenieAttendanceTimeCard(
-                      label: 'Check In',
-                      value: checkInTime,
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: FarmgenieAttendanceTimeCard(
-                      label: 'Check Out',
-                      value: checkOutTime,
-                      checkout: true,
-                    ),
-                  ),
-                ],
+              ),
+            ],
+          ),
+          if (loading)
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: LinearProgressIndicator(minHeight: 2),
+            ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: FarmgenieAttendanceTimeCard(
+                  label: 'Check In',
+                  value: checkInTime,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FarmgenieAttendanceTimeCard(
+                  label: 'Check Out',
+                  value: checkOutTime,
+                  checkout: true,
+                ),
               ),
             ],
           ),
@@ -416,6 +345,7 @@ class FarmgenieAttendanceStatusCard extends StatelessWidget {
   }
 }
 
+/// Stat tile: icon square, label and a large value.
 class FarmgenieAttendanceTimeCard extends StatelessWidget {
   const FarmgenieAttendanceTimeCard({
     super.key,
@@ -426,66 +356,58 @@ class FarmgenieAttendanceTimeCard extends StatelessWidget {
   final String label, value;
   final bool checkout;
   @override
-  Widget build(BuildContext context) => FarmgenieGlassCard(
-    radius: 18,
-    blur: 0,
-    opacity: .45,
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 120;
-        return Row(
-          children: [
-            Container(
-              width: compact ? 30 : 42,
-              height: compact ? 40 : 44,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                color:
-                    (checkout
-                            ? const Color(0xFFFFDDD6)
-                            : const Color(0xFFB3F1D3))
-                        .withValues(alpha: .65),
-                border: Border.all(color: Colors.white.withValues(alpha: .7)),
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: const Color(0xFFF7FAF7),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: cardBorder),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 120;
+          return Row(
+            children: [
+              FarmgenieIconTile(
+                icon: checkout ? Icons.logout_rounded : Icons.login_rounded,
+                size: compact ? 32 : 40,
+                color: checkout ? const Color(0xFFC2412D) : forestGreen,
+                background: checkout ? const Color(0xFFFDECEA) : iconTint,
               ),
-              child: Icon(
-                checkout ? Icons.logout_rounded : Icons.login_rounded,
-                size: compact ? 22 : 26,
-                color: checkout ? const Color(0xFFFF563A) : forestGreen,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      color: Color(0xFF304858),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 11.5,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      value,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
                       style: const TextStyle(
-                        color: Color(0xFF111827),
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
+                        color: homeSecondary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 3),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        value,
+                        style: const TextStyle(
+                          color: homeInk,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
-        );
-      },
+            ],
+          );
+        },
+      ),
     ),
   );
 }
@@ -504,69 +426,225 @@ class FarmgenieAttendanceActionButton extends StatelessWidget {
   final VoidCallback? onPressed;
   @override
   Widget build(BuildContext context) => ClipRRect(
-    borderRadius: BorderRadius.circular(21),
+    borderRadius: BorderRadius.circular(12),
     child: AnimatedContainer(
       duration: _motion(context),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(21),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: checkout && !completed
-              ? const [Color(0xFFFFAE70), Color(0xFFFF563A), Color(0xFFD83C27)]
-              : const [Color(0xFF77F39A), Color(0xFF08B882), Color(0xFF008B72)],
-        ),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: .98),
-          width: 1.8,
+      color: completed
+          ? const Color(0xFF6E9A7E)
+          : checkout
+          ? const Color(0xFFC2412D)
+          : forestGreen,
+      child: SizedBox(
+        width: double.infinity,
+        height: 54,
+        child: TextButton(
+          onPressed: busy ? null : onPressed,
+          style: TextButton.styleFrom(
+            foregroundColor: Colors.white,
+            disabledForegroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          child: busy
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      completed
+                          ? Icons.check_circle
+                          : checkout
+                          ? Icons.logout_rounded
+                          : Icons.login_rounded,
+                      size: 24,
+                    ),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
         ),
       ),
-      child: Stack(
-        children: [
-          SizedBox(
-            width: double.infinity,
-            height: 54,
-            child: TextButton(
-              onPressed: busy ? null : onPressed,
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.white,
-                disabledForegroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(21),
+    ),
+  );
+}
+
+/// One tile of the Quick Actions card.
+class FarmgenieQuickAction {
+  const FarmgenieQuickAction({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.tag,
+    required this.tagColor,
+    required this.buttonLabel,
+    required this.onPressed,
+  });
+  final IconData icon;
+  final String title, description, tag, buttonLabel;
+  final Color tagColor;
+  final VoidCallback onPressed;
+}
+
+/// Shortcut tiles with a tag and an action button, two per row on phones.
+class FarmgenieQuickActionsCard extends StatelessWidget {
+  const FarmgenieQuickActionsCard({super.key, required this.actions});
+  final List<FarmgenieQuickAction> actions;
+
+  @override
+  Widget build(BuildContext context) => FarmgenieGlassCard(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Row(
+          children: [
+            FarmgenieIconTile(icon: Icons.auto_awesome_rounded, size: 36),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Quick Actions',
+                style: TextStyle(
+                  color: homeInk,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
-              child: busy
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final columns = constraints.maxWidth >= 300 ? 2 : 1;
+            return Column(
+              children: [
+                for (var i = 0; i < actions.length; i += columns) ...[
+                  if (i > 0) const SizedBox(height: 10),
+                  IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Icon(
-                          completed
-                              ? Icons.check_circle
-                              : checkout
-                              ? Icons.logout_rounded
-                              : Icons.login_rounded,
-                          size: 25,
-                        ),
-                        const SizedBox(width: 12),
-                        Flexible(
-                          child: Text(
-                            label,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16,
-                            ),
+                        for (var j = i; j < i + columns; j++) ...[
+                          if (j > i) const SizedBox(width: 10),
+                          Expanded(
+                            child: j < actions.length
+                                ? _QuickActionTile(action: actions[j])
+                                : const SizedBox.shrink(),
                           ),
-                        ),
+                        ],
                       ],
                     ),
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      ],
+    ),
+  );
+}
+
+class _QuickActionTile extends StatelessWidget {
+  const _QuickActionTile({required this.action});
+  final FarmgenieQuickAction action;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: const Color(0xFFF7FAF7),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: cardBorder),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(action.icon, color: action.tagColor, size: 26),
+          const SizedBox(height: 8),
+          Text(
+            action.title,
+            style: const TextStyle(
+              color: homeInk,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            action.description,
+            style: const TextStyle(
+              color: homeSecondary,
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+          const Spacer(),
+          const SizedBox(height: 10),
+          // Full width, so the tag sits left and the button right.
+          SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: action.tagColor.withValues(alpha: .12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Text(
+                      action.tag,
+                      style: TextStyle(
+                        color: action.tagColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: action.onPressed,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: forestGreen,
+                    minimumSize: const Size(0, 34),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  child: Text(action.buttonLabel),
+                ),
+              ],
             ),
           ),
         ],
@@ -587,35 +665,33 @@ class FarmgenieLocationCard extends StatelessWidget {
   final VoidCallback? onRefresh;
   @override
   Widget build(BuildContext context) => FarmgenieGlassCard(
-    radius: 21,
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    padding: const EdgeInsets.all(14),
     child: Row(
       children: [
-        Container(
-          width: 48,
-          height: 48,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(
-              colors: [Color(0xFFCDF9E5), Color(0xFFBFF4DE)],
-            ),
-          ),
-          child: const Icon(
-            Icons.location_on_outlined,
-            size: 29,
-            color: forestGreen,
-          ),
-        ),
-        const SizedBox(width: 10),
+        const FarmgenieIconTile(icon: Icons.location_on_outlined),
+        const SizedBox(width: 12),
         Expanded(
-          child: Text(
-            address,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w400,
-              color: homeSecondary,
-              height: 1.5,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Current Location',
+                style: TextStyle(
+                  color: homeInk,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                address,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: homeSecondary,
+                  height: 1.45,
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(width: 4),
@@ -623,7 +699,7 @@ class FarmgenieLocationCard extends StatelessWidget {
           tooltip: 'Refresh location',
           onPressed: onRefresh,
           style: IconButton.styleFrom(
-            backgroundColor: Colors.white.withValues(alpha: .8),
+            backgroundColor: iconTint,
             foregroundColor: forestGreen,
             minimumSize: const Size(40, 40),
           ),
@@ -633,7 +709,7 @@ class FarmgenieLocationCard extends StatelessWidget {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.refresh_rounded, size: 25),
+              : const Icon(Icons.refresh_rounded, size: 24),
         ),
       ],
     ),
@@ -653,7 +729,7 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
     top: false,
     minimum: const EdgeInsets.fromLTRB(15, 10, 15, 10),
     child: FarmgenieGlassCard(
-      radius: 24,
+      radius: 18,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -664,7 +740,7 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
                 selected: i == selectedIndex,
                 button: true,
                 child: InkWell(
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(14),
                   onTap: () => onSelected(i),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 3),
@@ -673,12 +749,12 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
                       children: [
                         AnimatedContainer(
                           duration: _motion(context),
-                          width: 69,
-                          height: 33,
+                          width: 64,
+                          height: 32,
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(18),
+                            borderRadius: BorderRadius.circular(16),
                             color: i == selectedIndex
-                                ? const Color(0xFFBFF5D5).withValues(alpha: .85)
+                                ? iconTint
                                 : Colors.transparent,
                           ),
                           child: Icon(
@@ -691,7 +767,7 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
                             size: 24,
                             color: i == selectedIndex
                                 ? forestGreen
-                                : const Color(0xFF515D5B),
+                                : const Color(0xFF66736C),
                           ),
                         ),
                         const SizedBox(height: 3),
@@ -710,7 +786,7 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
                                 fontSize: 10.5,
                                 color: i == selectedIndex
                                     ? forestGreen
-                                    : const Color(0xFF52616D),
+                                    : const Color(0xFF66736C),
                                 fontWeight: i == selectedIndex
                                     ? FontWeight.w800
                                     : FontWeight.w600,

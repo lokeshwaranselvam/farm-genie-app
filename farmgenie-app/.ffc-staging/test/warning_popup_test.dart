@@ -42,7 +42,9 @@ void main() {
                   as Text;
           expect(find.text(content.data!, skipOffstage: false), findsOneWidget);
           if (content.data == message) sawAttendanceWarning = true;
-          await tester.tap(find.text('OK'));
+          // Warnings close with OK; the location settings prompt with Cancel.
+          final ok = find.text('OK');
+          await tester.tap(ok.evaluate().isNotEmpty ? ok : find.text('Cancel'));
           await tester.pumpAndSettle();
         }
         expect(sawAttendanceWarning, isTrue);

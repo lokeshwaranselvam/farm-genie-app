@@ -12,9 +12,17 @@ import '../widgets/checkin_design.dart';
 import '../widgets/glass_home.dart';
 
 class AttendanceScreen extends StatefulWidget {
-  const AttendanceScreen({super.key, this.recordsOnly = false});
+  const AttendanceScreen({
+    super.key,
+    this.recordsOnly = false,
+    this.onOpenPage,
+  });
 
   final bool recordsOnly;
+
+  /// Opens a Home tab by index (1 records, 2 material, 3 leave, 4 sales).
+  /// When null, the home page hides its Quick Actions card.
+  final ValueChanged<int>? onOpenPage;
 
   @override
   State<AttendanceScreen> createState() => _AttendanceScreenState();
@@ -179,28 +187,31 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (_locationDialogOpen || !mounted) return;
     _locationDialogOpen = true;
     try {
-      // Also safe when reported from the first location read in initState.
-      await WidgetsBinding.instance.endOfFrame;
-      if (!mounted) return;
-      final open = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          scrollable: true,
-          icon: const Icon(Icons.location_off_outlined),
-          title: const Text('Location needed'),
-          content: Text(error.message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: Text(
-                error.appSettings ? 'Open settings' : 'Open location settings',
+      // Queued with other warnings so the two never stack on screen.
+      final open = await WarningPopup.enqueue<bool>(
+        context,
+        () => showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            scrollable: true,
+            icon: const Icon(Icons.location_off_outlined),
+            title: const Text('Location needed'),
+            content: Text(error.message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
               ),
-            ),
-          ],
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(
+                  error.appSettings
+                      ? 'Open settings'
+                      : 'Open location settings',
+                ),
+              ),
+            ],
+          ),
         ),
       );
       if (open != true) return;
@@ -1019,7 +1030,50 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   ? null
                   : _attendanceAction,
             ),
-            const SizedBox(height: 10),
+            if (widget.onOpenPage case final open?) ...[
+              const SizedBox(height: 12),
+              FarmgenieQuickActionsCard(
+                actions: [
+                  FarmgenieQuickAction(
+                    icon: Icons.event_available_outlined,
+                    title: 'Leave Request',
+                    description: 'Apply for full or half-day leave.',
+                    tag: 'HR',
+                    tagColor: const Color(0xFFC0392B),
+                    buttonLabel: 'Apply',
+                    onPressed: () => open(3),
+                  ),
+                  FarmgenieQuickAction(
+                    icon: Icons.inventory_2_outlined,
+                    title: 'Material Request',
+                    description: 'Raise an indent for farm materials.',
+                    tag: 'Stores',
+                    tagColor: const Color(0xFF2B6CB0),
+                    buttonLabel: 'Request',
+                    onPressed: () => open(2),
+                  ),
+                  FarmgenieQuickAction(
+                    icon: Icons.calendar_month_outlined,
+                    title: 'Attendance Records',
+                    description: 'See your check-ins for the month.',
+                    tag: 'Records',
+                    tagColor: forestGreen,
+                    buttonLabel: 'View',
+                    onPressed: () => open(1),
+                  ),
+                  FarmgenieQuickAction(
+                    icon: Icons.analytics_outlined,
+                    title: 'Sales Dashboard',
+                    description: 'Track sales from the ERP dashboard.',
+                    tag: 'Sales',
+                    tagColor: const Color(0xFFC25E00),
+                    buttonLabel: 'Open',
+                    onPressed: () => open(4),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 12),
             FarmgenieLocationCard(
               address: _locationLoading
                   ? 'Finding your current location...'

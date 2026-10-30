@@ -223,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final isWebView = _index == 2 || _index == 4;
     final pages = [
-      const AttendanceScreen(),
+      AttendanceScreen(onOpenPage: _selectPage),
       _visitedPages.contains(1)
           ? const AttendanceScreen(recordsOnly: true)
           : const SizedBox.shrink(),
@@ -343,71 +343,65 @@ class _HomeScreenState extends State<HomeScreen> {
       drawerEnableOpenDragGesture: !isWebView,
       drawer: Drawer(
         child: SafeArea(
-          child: Column(
-            children: [
-              DrawerHeader(
-                decoration: const BoxDecoration(color: Colors.transparent),
-                child: Center(
-                  child: Image.asset(
-                    'logo-display.png',
-                    width: 170,
-                    fit: BoxFit.contain,
+          child: ListTileTheme(
+            textColor: const Color(0xFFD5EADB),
+            iconColor: const Color(0xFFD5EADB),
+            selectedColor: Colors.white,
+            selectedTileColor: sidebarSelected,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const FarmgenieHomeWordmark(),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.home_outlined),
-                title: const Text('Home'),
-                selected: _index == 0,
-                onTap: () {
-                  _selectPage(0);
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.calendar_month_outlined),
-                title: const Text('Attendance'),
-                selected: _index == 1,
-                onTap: () {
-                  _selectPage(1);
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.inventory_2_outlined),
-                title: const Text('Material Request'),
-                selected: _index == 2,
-                onTap: () {
-                  _selectPage(2);
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.event_available_outlined),
-                title: const Text('Leave Request'),
-                selected: _index == 3,
-                onTap: () {
-                  _selectPage(3);
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.analytics_outlined),
-                title: const Text('Sales Dashboard'),
-                selected: _index == 4,
-                onTap: () {
-                  _selectPage(4);
-                  Navigator.pop(context);
-                },
-              ),
-              const Spacer(),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.logout_rounded),
-                title: const Text('Log out'),
-                onTap: _logout,
-              ),
-            ],
+                for (final (index, icon, label) in const [
+                  (0, Icons.dashboard_outlined, 'Home'),
+                  (1, Icons.calendar_month_outlined, 'Attendance'),
+                  (2, Icons.inventory_2_outlined, 'Material Request'),
+                  (3, Icons.event_available_outlined, 'Leave Request'),
+                  (4, Icons.analytics_outlined, 'Sales Dashboard'),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 2,
+                    ),
+                    child: ListTile(
+                      leading: Icon(icon),
+                      title: Text(label),
+                      selected: _index == index,
+                      onTap: () {
+                        _selectPage(index);
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ),
+                const Spacer(),
+                const Divider(height: 1, color: Color(0x33FFFFFF)),
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: ListTile(
+                    leading: const Icon(Icons.logout_rounded),
+                    title: const Text('Log out'),
+                    onTap: _logout,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
