@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -60,7 +61,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       enableLandmarks: false,
       enableTracking: true,
       performanceMode: FaceDetectorMode.fast,
-      minFaceSize: 0.15,
+      minFaceSize: 0.20,
     ),
   );
   CameraController? _camera;
@@ -167,6 +168,16 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       // The OS may already have released the camera on backgrounding.
     }
     await camera.dispose();
+  }
+
+  Future<void> _releaseCapturedCamera(CameraController camera) async {
+    if (identical(_camera, camera)) _camera = null;
+    try {
+      await camera.dispose();
+    } on CameraException {
+      // The OS may have already released the camera after acquisition.
+    }
+    if (_alive && mounted) setState(() {});
   }
 
   Future<void> _initializeCamera(int session) async {
@@ -399,13 +410,18 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       await camera.stopImageStream();
       if (!_validSession(session)) return;
       photo = File((await camera.takePicture()).path);
+      // Timestamp acquisition, before native camera disposal. Cleanup latency
+      // is unrelated to whether this photo followed the live blink promptly.
+      final capturedAt = _clock.elapsed;
+      if (!_validSession(session)) return;
+      await _releaseCapturedCamera(camera);
       if (!_validSession(session)) return;
       String? error;
       // The photo must follow the tracked liveness frames immediately. Exactly
       // one face is then required in it: below, or by the embedding service
       // when the callback validates the photo.
       final readyAt = _blink.readyAt;
-      if (readyAt == null || _clock.elapsed - readyAt > _maximumCaptureDelay) {
+      if (readyAt == null || capturedAt - readyAt > _maximumCaptureDelay) {
         error = 'Hold still facing the camera after your blink, and try again.';
       } else if (!widget.validatePhotoInCallback ||
           widget.validateCapture == null) {
@@ -527,6 +543,19 @@ class _FaceCapturePageState extends State<FaceCapturePage>
                         if (previewReady) Center(child: CameraPreview(camera)),
                         if (previewReady)
                           IgnorePointer(
+                            child: ClipPath(
+                              clipper: const _OutsideFaceGuideClipper(),
+                              child: BackdropFilter(
+                                filter: ui.ImageFilter.blur(
+                                  sigmaX: 10,
+                                  sigmaY: 10,
+                                ),
+                                child: const SizedBox.expand(),
+                              ),
+                            ),
+                          ),
+                        if (previewReady)
+                          IgnorePointer(
                             child: CustomPaint(
                               painter: _FaceGuidePainter(
                                 color: _blink.progress.canCapture
@@ -623,18 +652,35 @@ Map<String, double>? _jpegInformation(Uint8List bytes) {
   return {'brightness': faceCenterBrightness(image)};
 }
 
+Rect _faceGuideRect(Size size) {
+  final width = math.min(size.width * 0.76, size.height * 0.56);
+  return Rect.fromCenter(
+    center: size.center(Offset.zero),
+    width: width,
+    height: width * 1.28,
+  );
+}
+
+class _OutsideFaceGuideClipper extends CustomClipper<Path> {
+  const _OutsideFaceGuideClipper();
+
+  @override
+  Path getClip(Size size) => Path()
+    ..fillType = PathFillType.evenOdd
+    ..addRect(Offset.zero & size)
+    ..addOval(_faceGuideRect(size));
+
+  @override
+  bool shouldReclip(_OutsideFaceGuideClipper oldClipper) => false;
+}
+
 class _FaceGuidePainter extends CustomPainter {
   const _FaceGuidePainter({required this.color});
   final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final width = math.min(size.width * 0.76, size.height * 0.56);
-    final rect = Rect.fromCenter(
-      center: size.center(Offset.zero),
-      width: width,
-      height: width * 1.28,
-    );
+    final rect = _faceGuideRect(size);
     final shade = Path()
       ..fillType = PathFillType.evenOdd
       ..addRect(Offset.zero & size)

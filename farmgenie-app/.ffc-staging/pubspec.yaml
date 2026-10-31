@@ -41,7 +41,9 @@ dependencies:
   geocoding: ^5.0.0
   webview_flutter: ^4.10.0
   camera: ^0.12.1
-  camera_android: ^0.10.12
+  # Local 0.10.12 patch: late autofocus callbacks must tolerate camera closure.
+  camera_android:
+    path: third_party/camera_android
   google_mlkit_face_detection: ^0.15.1
   flutter_onnxruntime: ^1.9.0
   image: 4.5.4

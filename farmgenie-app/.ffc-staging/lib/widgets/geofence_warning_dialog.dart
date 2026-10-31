@@ -9,6 +9,7 @@ class GeofenceWarningDialog extends StatelessWidget {
   static bool matchesMessage(String message) {
     final text = message.toLowerCase();
     return text.contains('geofence') ||
+        text.contains('working location') ||
         text.contains('outside the selected office area') ||
         text.contains('outside the allowed') ||
         (text.contains('within') &&
@@ -23,7 +24,17 @@ class GeofenceWarningDialog extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) {
+    final text = message.toLowerCase();
+    final hidesDistance =
+        text.contains('meters from') ||
+        text.contains('metres from') ||
+        text.contains('meter radius') ||
+        text.contains('working location');
+    final displayMessage = hidesDistance
+        ? 'You are out of your working location. Please reach your working location and try again.'
+        : message;
+    return AlertDialog(
     backgroundColor: const Color(0xFFF1FFF6),
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(24),
@@ -39,7 +50,7 @@ class GeofenceWarningDialog extends StatelessWidget {
       style: TextStyle(fontWeight: FontWeight.w800),
     ),
     scrollable: true,
-    content: Text(message, style: const TextStyle(height: 1.5)),
+    content: Text(displayMessage, style: const TextStyle(height: 1.5)),
     actions: [
       FilledButton(
         style: FilledButton.styleFrom(backgroundColor: const Color(0xFF075C3D)),
@@ -47,5 +58,6 @@ class GeofenceWarningDialog extends StatelessWidget {
         child: const Text('OK'),
       ),
     ],
-  );
+    );
+  }
 }

@@ -129,6 +129,62 @@ List<double> embedding({int axis = 0}) =>
     List<double>.generate(128, (index) => index == axis ? 1 : 0);
 
 void main() {
+  testWidgets('enrollment validates capture without running ONNX', (
+    tester,
+  ) async {
+    late BuildContext context;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (value) {
+            context = value;
+            return const SizedBox.shrink();
+          },
+        ),
+      ),
+    );
+    await tester.runAsync(() async {
+      final directory = await Directory.systemTemp.createTemp(
+        'genie-enrollment-test-',
+      );
+      final selfie = await File(
+        '${directory.path}/selfie.jpg',
+      ).writeAsBytes(jpeg);
+      var validationCalls = 0;
+      var inferenceCalls = 0;
+      var warmUpCalls = 0;
+      final flow = FaceAuthFlow(
+        api: apiWith(MockClient((_) async => response(statusMessage()))),
+        validateEnrollment: (_) async => validationCalls++,
+        captureEmbed: (_) async {
+          inferenceCalls++;
+          return embedding();
+        },
+        warmUp: () async => warmUpCalls++,
+        capture: (_, _, validate) async {
+          expect(await validate(selfie), isNull);
+          return null;
+        },
+      );
+      try {
+        final result = await flow.enroll(
+          context,
+          const FaceEnrollmentStatus(
+            currentUser: account,
+            csrfToken: 'face-csrf',
+            minimumSimilarity: 0.5,
+          ),
+        );
+        expect(result, isNull);
+        expect(validationCalls, 1);
+        expect(inferenceCalls, 0);
+        expect(warmUpCalls, 0);
+      } finally {
+        await directory.delete(recursive: true);
+      }
+    });
+  });
+
   group('private template cache logout races', () {
     test(
       'stale derivation after logout cannot restore the previous account template',

@@ -44,10 +44,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   };
 
   String _employeeName = 'Employee';
+  String _employeeId = '';
+  String? _employeeImage;
   String? _company;
   bool _loading = true;
   bool _actionLoading = false;
   bool _isOperation = false;
+  double? _geofenceRadiusMeters;
   bool _checkedIn = false;
   bool _workCompleted = false;
   String? _checkInTime;
@@ -251,11 +254,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (!mounted) return;
     setState(() {
       _employeeName = raw['employee_name']?.toString() ?? _employeeName;
+      _employeeId =
+          (raw['employee_id'] ?? raw['employee'])?.toString() ?? _employeeId;
+      _employeeImage = raw['image']?.toString() ?? _employeeImage;
       _company = raw['company']?.toString() ?? _company;
       _isOperation =
           raw['is_operation'] == true ||
           raw['is_operation'] == 1 ||
           raw['is_operation'] == '1';
+      _geofenceRadiusMeters = AttendanceGeofence.parseRadiusMeters(
+        raw['geofence_radius_meters'],
+      );
       final office = raw['office_type']?.toString();
       _officeType = office == null
           ? null
@@ -341,11 +350,27 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         AttendanceGeofence.inaccurateLocationMessage(position.accuracy),
       );
     }
-    if (!AttendanceGeofence.isInside(distance, position.accuracy)) {
-      throw FarmgenieApiException(
-        'You are ${distance.round()} meters from $office. Move within ${AttendanceGeofence.radiusMeters.round()} meters to check ${_checkedIn ? 'out' : 'in'}.',
+    final radius = _requireGeofenceRadius();
+    if (!AttendanceGeofence.isInside(
+      distance,
+      position.accuracy,
+      radiusMeters: radius,
+    )) {
+      throw const FarmgenieApiException(
+        'You are out of your working location. Please reach your working location and try again.',
       );
     }
+  }
+
+  /// A missing API policy must not silently fall back to a client radius.
+  double _requireGeofenceRadius() {
+    final radius = _geofenceRadiusMeters;
+    if (radius == null) {
+      throw const FarmgenieApiException(
+        'ERP did not provide a valid attendance radius. Refresh attendance or contact HR.',
+      );
+    }
+    return radius;
   }
 
   /// The configured office closest to the last GPS fix, if any.
@@ -384,6 +409,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         );
       }
       _applyStatus(status['data']);
+      // The refreshed API policy applies equally to IN and OUT.
+      if (!_isOperation) _requireGeofenceRadius();
       if (_workCompleted && !_checkedIn) {
         throw const FarmgenieApiException(
           'Work completed for today. You cannot check in again today.',
@@ -989,6 +1016,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             FarmgenieHomeEntrance(
               child: FarmgenieGreetingCard(
                 name: _employeeName,
+                employeeId: _employeeId,
+                image: _employeeImage,
                 checkedIn: _checkedIn,
               ),
             ),
@@ -1030,49 +1059,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   ? null
                   : _attendanceAction,
             ),
-            if (widget.onOpenPage case final open?) ...[
-              const SizedBox(height: 12),
-              FarmgenieQuickActionsCard(
-                actions: [
-                  FarmgenieQuickAction(
-                    icon: Icons.event_available_outlined,
-                    title: 'Leave Request',
-                    description: 'Apply for full or half-day leave.',
-                    tag: 'HR',
-                    tagColor: const Color(0xFFC0392B),
-                    buttonLabel: 'Apply',
-                    onPressed: () => open(3),
-                  ),
-                  FarmgenieQuickAction(
-                    icon: Icons.inventory_2_outlined,
-                    title: 'Material Request',
-                    description: 'Raise an indent for farm materials.',
-                    tag: 'Stores',
-                    tagColor: const Color(0xFF2B6CB0),
-                    buttonLabel: 'Request',
-                    onPressed: () => open(2),
-                  ),
-                  FarmgenieQuickAction(
-                    icon: Icons.calendar_month_outlined,
-                    title: 'Attendance Records',
-                    description: 'See your check-ins for the month.',
-                    tag: 'Records',
-                    tagColor: forestGreen,
-                    buttonLabel: 'View',
-                    onPressed: () => open(1),
-                  ),
-                  FarmgenieQuickAction(
-                    icon: Icons.analytics_outlined,
-                    title: 'Sales Dashboard',
-                    description: 'Track sales from the ERP dashboard.',
-                    tag: 'Sales',
-                    tagColor: const Color(0xFFC25E00),
-                    buttonLabel: 'Open',
-                    onPressed: () => open(4),
-                  ),
-                ],
-              ),
-            ],
             const SizedBox(height: 12),
             FarmgenieLocationCard(
               address: _locationLoading

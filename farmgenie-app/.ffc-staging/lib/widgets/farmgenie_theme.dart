@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 
+import 'farmgenie_theme_controller.dart';
 import 'glass_home.dart';
 
-/// Shared green surfaces for native pages, forms and dialogs.
-ThemeData farmgenieTheme() {
+ThemeData farmgenieTheme([
+  FarmgenieThemeChoice choice = FarmgenieThemeChoice.farmgenie,
+]) {
+  final primary = switch (choice) {
+    FarmgenieThemeChoice.farmgenie => forestGreen,
+    FarmgenieThemeChoice.ocean => const Color(0xFF1565C0),
+    FarmgenieThemeChoice.earth => const Color(0xFF8A5A2B),
+  };
   final scheme = ColorScheme.fromSeed(
-    seedColor: forestGreen,
-    primary: forestGreen,
+    seedColor: primary,
+    primary: primary,
     surface: pageBackground,
     onSurface: homeInk,
   );
@@ -17,10 +24,10 @@ ThemeData farmgenieTheme() {
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
-    scaffoldBackgroundColor: Colors.transparent,
-    appBarTheme: const AppBarTheme(
-      backgroundColor: Colors.transparent,
-      foregroundColor: forestGreen,
+    scaffoldBackgroundColor: Colors.white,
+    appBarTheme: AppBarTheme(
+      backgroundColor: Colors.white,
+      foregroundColor: primary,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
     ),
@@ -41,7 +48,7 @@ ThemeData farmgenieTheme() {
       shape: shape,
     ),
     drawerTheme: const DrawerThemeData(
-      backgroundColor: sidebarGreen,
+      backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
     ),
     navigationBarTheme: const NavigationBarThemeData(
@@ -59,13 +66,13 @@ ThemeData farmgenieTheme() {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: forestGreen,
+        backgroundColor: primary,
         foregroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     ),
-    progressIndicatorTheme: const ProgressIndicatorThemeData(
-      color: forestGreen,
+    progressIndicatorTheme: ProgressIndicatorThemeData(
+      color: primary,
     ),
   );
 }

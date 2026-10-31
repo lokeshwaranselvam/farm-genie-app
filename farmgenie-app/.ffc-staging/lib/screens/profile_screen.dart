@@ -4,6 +4,7 @@ import '../widgets/warning_popup.dart';
 import '../services/farmgenie_api.dart';
 import '../widgets/employee_avatar.dart';
 import '../widgets/glass_home.dart';
+import '../widgets/farmgenie_theme_controller.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -78,6 +79,36 @@ class _ProfileScreenState extends State<ProfileScreen> with WarningPopupState {
           'Profile',
           style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
         ),
+        actions: [
+          ValueListenableBuilder<FarmgenieThemeChoice>(
+            valueListenable: FarmgenieThemeController.choice,
+            builder: (context, selected, child) =>
+                PopupMenuButton<FarmgenieThemeChoice>(
+                  tooltip: 'App theme',
+                  icon: const Icon(Icons.palette_outlined),
+                  onSelected: FarmgenieThemeController.setChoice,
+                  itemBuilder: (context) => [
+                    for (final choice in FarmgenieThemeChoice.values)
+                      PopupMenuItem(
+                        value: choice,
+                        child: Row(
+                          children: [
+                            Icon(
+                              choice == selected
+                                  ? Icons.check_circle
+                                  : Icons.circle_outlined,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(choice.label),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -141,8 +172,8 @@ class _ProfileScreenState extends State<ProfileScreen> with WarningPopupState {
                       ),
                       _field(
                         Icons.groups_outlined,
-                        'Department',
-                        _data['department']?.toString(),
+                        'designation',
+                        _data['designation']?.toString(),
                       ),
                       _field(
                         Icons.location_on_outlined,

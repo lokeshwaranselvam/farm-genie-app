@@ -80,7 +80,7 @@ void main() {
     expect(readyCalls, 1);
   });
 
-  testWidgets('first missing enrollment automatically opens selfie setup', (
+  testWidgets('first missing enrollment opens camera after Take selfie', (
     tester,
   ) async {
     var cameraCalls = 0;
@@ -103,6 +103,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    expect(cameraCalls, 0);
+    expect(find.text('Protected home'), findsNothing);
+    await tester.tap(find.text('Take selfie'));
+    await tester.pumpAndSettle();
     expect(cameraCalls, 1);
     expect(readyCalls, 1);
     expect(find.text('Protected home'), findsOneWidget);
@@ -122,6 +126,8 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Take selfie'));
       await tester.pumpAndSettle();
       expect(find.text('Protected home'), findsNothing);
       expect(
@@ -165,6 +171,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Take selfie'));
+      await tester.pumpAndSettle();
       expect(find.textContaining('Upload interrupted.'), findsOneWidget);
       await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
@@ -172,7 +180,7 @@ void main() {
       expect(find.textContaining('Upload interrupted.'), findsNothing);
       await tester.tap(find.text('Take selfie'));
       await tester.pumpAndSettle();
-      expect(order, ['status', 'camera', 'status', 'camera']);
+      expect(order, ['status', 'status', 'camera', 'status', 'camera']);
       expect(find.text('Protected home'), findsOneWidget);
     },
   );
@@ -187,7 +195,7 @@ void main() {
           home: FaceEnrollmentGate(
             onSignOut: () async {},
             child: protectedChild,
-            loadStatus: () async => enrollment(enrolled: ++statusCalls > 1),
+            loadStatus: () async => enrollment(enrolled: ++statusCalls > 2),
             enrollSelfie: (_, _) async {
               cameraCalls++;
               throw TimeoutException(
@@ -198,12 +206,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Take selfie'));
+      await tester.pumpAndSettle();
       expect(find.text('Protected home'), findsNothing);
       await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Take selfie'));
       await tester.pumpAndSettle();
-      expect(statusCalls, 2);
+      expect(statusCalls, 3);
       expect(cameraCalls, 1);
       expect(find.text('Protected home'), findsOneWidget);
     },
@@ -275,9 +285,12 @@ void main() {
       statusReply.complete(enrollment());
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
+      expect(cameraCalls, 0);
+      await tester.tap(find.text('Take selfie'));
+      await tester.pump();
       expect(find.byType(FilledButton), findsNothing);
       expect(cameraCalls, 1);
-      expect(statusCalls, 1);
+      expect(statusCalls, 2);
       expect(find.text('Your attendance face photo'), findsOneWidget);
       expect(find.text('Set up your selfie'), findsOneWidget);
       cameraReply.complete(enrollment(enrolled: true));

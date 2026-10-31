@@ -35,10 +35,20 @@ void main() {
             expect(request.url.queryParameters['action'], 'status');
             return reply({
               'status': 'success',
-              'employee': {'name': 'EMP-1', 'employee_name': 'Test Employee'},
+              'employee': {
+                'name': 'EMP-1',
+                'employee_name': 'Test Employee',
+                'company': 'Farm',
+                'department': 'Accounts',
+                'designation': 'Billing Associate',
+                'branch': 'Alapakkam',
+                'leave_approver': 'hr@example.test',
+                'image': '/private/files/me.jpg',
+              },
               'next_action': next,
               'latest_checkin_id': 'CHECKIN-1',
               'is_operation': false,
+              'geofence_radius_meters': 275,
               'is_labour': false,
               'today_logs': [
                 {
@@ -56,12 +66,7 @@ void main() {
             expect(filters, {'name': 'CHECKIN-1', 'employee': 'EMP-1'});
             return reply({'custom_office_type': 'Head Office - Aalapakkam'});
           }
-          expect(filters, {'name': 'EMP-1'});
-          return reply({
-            'company': 'Farm',
-            'leave_approver': 'hr@example.test',
-            'image': '/private/files/me.jpg',
-          });
+          fail('Profile must not make a separate Employee request');
         });
         final result = await http.runWithClient(
           FarmgenieApi.attendanceStatus,
@@ -70,10 +75,16 @@ void main() {
         final data = result['data'] as Map;
         expect(data['employee'], 'EMP-1');
         expect(data['company'], 'Farm');
+        expect(data['department'], 'Accounts');
+        expect(data['designation'], 'Billing Associate');
+        expect(data['branch'], 'Alapakkam');
+        expect(data['image'], '/private/files/me.jpg');
+        expect(FarmgenieApi.employeeProfile.value['image'], data['image']);
         expect(data['leave_approver'], 'hr@example.test');
         expect(data['checked_in'], next == 'OUT');
         expect(data['work_completed'], next == null);
         expect(data['latest_checkin_id'], 'CHECKIN-1');
+        expect(data['geofence_radius_meters'], 275);
         if (next == 'OUT') {
           expect(data['office_type'], 'Head Office - Aalapakkam');
         }
@@ -165,9 +176,6 @@ void main() {
             'next_action': 'IN',
             'is_operation': false,
           });
-        }
-        if (request.url.path.endsWith('get_value')) {
-          return reply({'company': 'Farm'});
         }
         expect(request.url.path, '/api/method/frappe.client.get_list');
         final filters =

@@ -4,7 +4,11 @@ import 'dart:math' as math;
 class AttendanceGeofence {
   AttendanceGeofence._();
 
-  static const radiusMeters = 200.0;
+  /// No client fallback: the attendance API owns the office radius.
+  static double? parseRadiusMeters(dynamic value) {
+    final radius = double.tryParse('$value');
+    return radius != null && radius.isFinite && radius > 0 ? radius : null;
+  }
 
   /// Fixes reporting a worse horizontal accuracy than this are not trusted
   /// for a geofence decision; the user must wait for a better GPS signal.
@@ -66,8 +70,17 @@ class AttendanceGeofence {
   /// [radiusMeters] AND the fix is accurate to [maximumAccuracyMeters].
   /// Accuracy is deliberately not added to or subtracted from the distance;
   /// a coarse fix is rejected rather than given the benefit of the doubt.
-  static bool isInside(double distance, double accuracy) =>
-      distance.isFinite && distance <= radiusMeters && isAccurateFix(accuracy);
+  static bool isInside(
+    double distance,
+    double accuracy, {
+    required double radiusMeters,
+  }) =>
+      radiusMeters.isFinite &&
+      radiusMeters > 0 &&
+      distance.isFinite &&
+      distance >= 0 &&
+      distance <= radiusMeters &&
+      isAccurateFix(accuracy);
 
   static double? distanceMeters(
     String office,

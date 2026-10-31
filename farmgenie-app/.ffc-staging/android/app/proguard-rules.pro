@@ -16,3 +16,8 @@
 -keep class com.google.android.gms.internal.mlkit_vision_** { *; }
 -keep class com.google_mlkit_commons.** { *; }
 -keep class com.google_mlkit_face_detection.** { *; }
+
+# ONNX Runtime JNI resolves Java classes, constructors and members by name.
+# Without this, R8 renames TensorInfo/OnnxJavaType and inference aborts the
+# process in convertToTensorInfo (JNI GetMethodID: java_class == null).
+-keep class ai.onnxruntime.** { *; }

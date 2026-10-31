@@ -7,6 +7,7 @@ import 'screens/erp_web_view_screen.dart';
 import 'screens/face_enrollment_gate.dart';
 import 'screens/login_screen.dart';
 import 'screens/material_request_screen.dart';
+import 'screens/mandatory_permissions_gate.dart';
 import 'screens/leave_request_screen.dart';
 import 'screens/sales_dashboard_screen.dart';
 import 'screens/profile_screen.dart';
@@ -14,10 +15,12 @@ import 'services/farmgenie_api.dart';
 import 'widgets/employee_avatar.dart';
 import 'widgets/glass_home.dart';
 import 'widgets/farmgenie_theme.dart';
+import 'widgets/farmgenie_theme_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: '.env');
+  await FarmgenieThemeController.initialize();
   runApp(const FarmgenieApp());
 }
 
@@ -78,16 +81,23 @@ class _FarmgenieAppState extends State<FarmgenieApp> {
     _showLogin();
   }
 
-  Widget _faceHome() => FaceEnrollmentGate(
-    onSignOut: () async {
+  Widget _faceHome() {
+    Future<void> signOut() async {
       try {
         await FarmgenieApi.logout();
       } finally {
         _showLogin();
       }
-    },
-    child: HomeScreen(onLogout: _showLogin),
-  );
+    }
+
+    return MandatoryPermissionsGate(
+      onSignOut: signOut,
+      child: FaceEnrollmentGate(
+        onSignOut: signOut,
+        child: HomeScreen(onLogout: _showLogin),
+      ),
+    );
+  }
 
   void _showHome() {
     if (!mounted) return;
@@ -109,27 +119,17 @@ class _FarmgenieAppState extends State<FarmgenieApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: _navigatorKey,
-      debugShowCheckedModeBanner: false,
-      title: 'Farmgenie',
-      theme: farmgenieTheme(),
-      builder: (context, child) =>
-          BotanicalBackground(child: child ?? const SizedBox.shrink()),
-      home:
-          _screen ??
-          const Scaffold(
-            body: Center(
-              child: SizedBox(
-                width: 72,
-                height: 72,
-                child: CircularProgressIndicator(
-                  strokeWidth: 7,
-                  color: Color(0xFF2D6A3F),
-                ),
-              ),
-            ),
-          ),
+    return ValueListenableBuilder<FarmgenieThemeChoice>(
+      valueListenable: FarmgenieThemeController.choice,
+      builder: (context, choice, child) => MaterialApp(
+        navigatorKey: _navigatorKey,
+        debugShowCheckedModeBanner: false,
+        title: 'Farmgenie',
+        theme: farmgenieTheme(choice),
+        builder: (context, child) =>
+            BotanicalBackground(child: child ?? const SizedBox.shrink()),
+        home: _screen ?? const Scaffold(backgroundColor: Colors.white),
+      ),
     );
   }
 }
@@ -240,136 +240,85 @@ class _HomeScreenState extends State<HomeScreen> {
     final scaffold = Scaffold(
       key: _scaffoldKey,
       backgroundColor: Colors.transparent,
-      appBar: _index == 0
-          ? AppBar(
-              backgroundColor: Colors.transparent,
-              toolbarHeight: 66,
-              systemOverlayStyle: SystemUiOverlayStyle.dark.copyWith(
-                statusBarColor: Colors.transparent,
-                systemNavigationBarColor: Colors.transparent,
-                systemNavigationBarIconBrightness: Brightness.dark,
-              ),
-              leadingWidth: 64,
-              leading: Builder(
-                builder: (context) => Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 0, 10),
-                  child: FarmgenieGlassCard(
-                    radius: 30,
-                    opacity: .65,
-                    child: IconButton(
-                      tooltip: 'Open navigation menu',
-                      onPressed: () => Scaffold.of(context).openDrawer(),
-                      icon: const Icon(
-                        Icons.menu_rounded,
-                        color: Color(0xFF203831),
-                        size: 26,
-                      ),
-                    ),
-                  ),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        toolbarHeight: 66,
+        systemOverlayStyle: SystemUiOverlayStyle.dark.copyWith(
+          statusBarColor: Colors.white,
+          systemNavigationBarColor: Colors.white,
+          systemNavigationBarIconBrightness: Brightness.dark,
+        ),
+        leadingWidth: 64,
+        leading: Builder(
+          builder: (context) => Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 0, 10),
+            child: FarmgenieGlassCard(
+              radius: 30,
+              child: IconButton(
+                tooltip: 'Open navigation menu',
+                onPressed: () => Scaffold.of(context).openDrawer(),
+                icon: Icon(
+                  Icons.menu_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                  size: 26,
                 ),
               ),
-              titleSpacing: 16,
-              title: const FarmgenieHomeWordmark(),
-              actions: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(0, 10, 20, 10),
-                  child: FarmgenieGlassCard(
-                    radius: 30,
-                    opacity: .65,
-                    child: IconButton(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const ProfileScreen(),
-                        ),
-                      ),
-                      tooltip: 'Profile',
-                      icon: ValueListenableBuilder<Map<String, dynamic>>(
-                        valueListenable: FarmgenieApi.employeeProfile,
-                        builder: (context, profile, child) => EmployeeAvatar(
-                          radius: 15,
-                          name:
-                              profile['employee_name']?.toString() ??
-                              'Employee',
-                          image: profile['image']?.toString(),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          : AppBar(
-              leading: isWebView
-                  ? IconButton(
-                      tooltip: 'Back',
-                      onPressed: () => _selectPage(0),
-                      icon: const Icon(Icons.arrow_back_rounded),
-                    )
-                  : null,
-              title: Align(
-                alignment: Alignment.centerLeft,
-                child: Image.asset(
-                  'logo-display.png',
-                  height: 34,
-                  width: 118,
-                  fit: BoxFit.contain,
-                ),
-              ),
-              centerTitle: false,
-              titleSpacing: isWebView ? 0 : -30,
-              actions: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 10),
-                  child: IconButton(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const ProfileScreen(),
-                      ),
-                    ),
-                    tooltip: 'Profile',
-                    icon: ValueListenableBuilder<Map<String, dynamic>>(
-                      valueListenable: FarmgenieApi.employeeProfile,
-                      builder: (context, profile, child) => EmployeeAvatar(
-                        radius: 17,
-                        name:
-                            profile['employee_name']?.toString() ?? 'Employee',
-                        image: profile['image']?.toString(),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
             ),
+          ),
+        ),
+        titleSpacing: 16,
+        title: const FarmgenieHomeWordmark(),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(0, 10, 20, 10),
+            child: FarmgenieGlassCard(
+              radius: 30,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const ProfileScreen(),
+                  ),
+                ),
+                tooltip: 'Profile',
+                icon: ValueListenableBuilder<Map<String, dynamic>>(
+                  valueListenable: FarmgenieApi.employeeProfile,
+                  builder: (context, profile, child) => EmployeeAvatar(
+                    radius: 15,
+                    name: profile['employee_name']?.toString() ?? 'Employee',
+                    image: profile['image']?.toString(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
       drawerEnableOpenDragGesture: !isWebView,
       drawer: Drawer(
         child: SafeArea(
           child: ListTileTheme(
-            textColor: const Color(0xFFD5EADB),
-            iconColor: const Color(0xFFD5EADB),
-            selectedColor: Colors.white,
-            selectedTileColor: sidebarSelected,
+            textColor: homeInk,
+            iconColor: Theme.of(context).colorScheme.primary,
+            selectedColor: Theme.of(context).colorScheme.primary,
+            selectedTileColor: Theme.of(context).colorScheme.primaryContainer,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
             ),
             child: Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const FarmgenieHomeWordmark(),
-                      ),
-                    ],
+                Container(
+                  width: double.infinity,
+                  color: Colors.white,
+                  padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      child: const FarmgenieHomeWordmark(scale: 1.1),
+                    ),
                   ),
                 ),
                 for (final (index, icon, label) in const [
-                  (0, Icons.dashboard_outlined, 'Home'),
+                  (0, Icons.home_filled, 'Home'),
                   (1, Icons.calendar_month_outlined, 'Attendance'),
                   (2, Icons.inventory_2_outlined, 'Material Request'),
                   (3, Icons.event_available_outlined, 'Leave Request'),
@@ -391,7 +340,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 const Spacer(),
-                const Divider(height: 1, color: Color(0x33FFFFFF)),
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Version 1.0.0',
+                    style: TextStyle(
+                      color: homeSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Divider(height: 1, color: cardBorder),
                 Padding(
                   padding: const EdgeInsets.all(12),
                   child: ListTile(
@@ -406,37 +366,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       body: IndexedStack(index: _index, children: pages),
-      bottomNavigationBar: _index == 0
-          ? FarmgenieGlassBottomNavigation(
-              selectedIndex: _bottomIndex,
-              onSelected: _selectBottomPage,
-            )
-          : NavigationBar(
-              selectedIndex: _bottomIndex,
-              onDestinationSelected: _selectBottomPage,
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.home_outlined),
-                  selectedIcon: Icon(Icons.home),
-                  label: 'Home',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.access_time_outlined),
-                  selectedIcon: Icon(Icons.calendar_month),
-                  label: 'Attendance',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.event_available_outlined),
-                  selectedIcon: Icon(Icons.event_available),
-                  label: 'Leave Request',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.inventory_2_outlined),
-                  selectedIcon: Icon(Icons.inventory_2),
-                  label: 'Material Request',
-                ),
-              ],
-            ),
+      bottomNavigationBar: FarmgenieGlassBottomNavigation(
+        selectedIndex: _bottomIndex,
+        onSelected: _selectBottomPage,
+      ),
     );
     return PopScope(
       canPop: _index == 0,

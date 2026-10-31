@@ -43,7 +43,7 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate>
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool enrollIfMissing = false}) async {
     if (!mounted) return;
     setState(() {
       _busy = true;
@@ -61,7 +61,11 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate>
         widget.onReady?.call();
         return;
       }
-      await _enroll(status);
+      if (enrollIfMissing) {
+        await _enroll(status);
+      } else {
+        setState(() => _busy = false);
+      }
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -93,7 +97,7 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate>
     if (_busy) return;
     // Refresh server state first: another successful request may have saved
     // the photo even when its response was interrupted on this phone.
-    await _load();
+    await _load(enrollIfMissing: _status?.enrolled == false);
   }
 
   Future<void> _signOut() async {

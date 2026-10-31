@@ -10,6 +10,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../utils/face/face_template_cache.dart';
 import '../utils/face/face_embedding_service.dart';
+import 'attendance_geofence.dart';
 
 class FarmgenieApiException implements Exception {
   const FarmgenieApiException(this.message);
@@ -407,7 +408,19 @@ class FarmgenieApi {
         'ERP returned incomplete attendance status.',
       );
     }
-    final profile = await _employeeDetails(sid, employee['name'] as String);
+    // Profile fields come from the session-bound mobile_checkin response.
+    // A separate Employee read may be denied for employee self-service users.
+    final profile = <String, dynamic>{
+      for (final field in [
+        'company',
+        'department',
+        'designation',
+        'branch',
+        'leave_approver',
+        'image',
+      ])
+        field: employee[field],
+    };
     Map? lastIn;
     Map? lastOut;
     final previous = payload['previous'];
@@ -441,6 +454,9 @@ class FarmgenieApi {
       'employee_id': employee['name'],
       'employee_name': employee['employee_name'],
       'is_operation': payload['is_operation'],
+      'geofence_radius_meters': AttendanceGeofence.parseRadiusMeters(
+        payload['geofence_radius_meters'],
+      ),
       'is_labour': payload['is_labour'],
       'checked_in': payload['next_action'] == 'OUT',
       'work_completed': payload['next_action'] == null,
@@ -483,25 +499,6 @@ class FarmgenieApi {
         .timeout(const Duration(seconds: 15));
     return _message(response);
   }
-
-  static Future<Map<String, dynamic>> _employeeDetails(
-    String? sid,
-    String employee,
-  ) => _readEmployeeValue(
-    sid,
-    'Employee',
-    {'name': employee},
-    [
-      'name',
-      'employee_name',
-      'company',
-      'department',
-      'designation',
-      'branch',
-      'leave_approver',
-      'image',
-    ],
-  );
 
   static Future<List<Map<String, dynamic>>> attendanceCalendar(
     DateTime month,

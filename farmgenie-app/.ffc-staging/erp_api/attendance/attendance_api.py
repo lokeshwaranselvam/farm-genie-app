@@ -1,359 +1,207 @@
-# Frappe Server Script
-# Script Type: API
-# API Method: farmgenie_employee_attendance
-# HTTP Method: GET, POST
-#
-# One authenticated endpoint for employee attendance.
-# Request action: status, check_in, or check_out.
-# POST fields for check_in/check_out: latitude, longitude, address
+# Server Script: Script Type = API; API Method = mobile_checkin; Allow Guest = OFF
+# Paste this entire file into the Script field. No imports, def, or return required.
+# action=status reads state; action=checkin records an IN/OUT.
+# MariaDB SQL, matching the original AttendanceList implementation.
+# Single radius setting for status, check-in and checkout (metres).
+geofence_radius_meters = 100
+try:
+    user = frappe.session.user
+    if not user or user == "Guest":
+        frappe.throw("Please sign in before marking attendance")
 
-action = (frappe.form_dict.get("action") or "").strip().lower()
+    action = (frappe.form_dict.get("action") or "status").strip().lower()
+    if action not in ["status", "checkin"]:
+        frappe.throw("Invalid action")
+    # Extra CSRF check using a non-reserved form key (Frappe may consume csrf_token).
+    # Same rule as Frappe core: enforce only when the session actually holds a token.
+    # Sessions created via /api/method/login have no token until a Desk/web page
+    # generates one, so requiring it unconditionally blocked every check-in.
+    if action == "checkin":
+        session_token = frappe.session.csrf_token or ""
+        sent_token = frappe.form_dict.get("attendance_security_token") or ""
+        if session_token and sent_token != session_token:
+            frappe.throw("Security token expired. Reload the attendance page")
 
-if action not in ("status", "calendar", "check_in", "check_out"):
-    frappe.throw("action must be status, calendar, check_in, or check_out.")
+    # Lock the employee during writes. All writers using this API serialize here.
+    employee_query = """
+        SELECT name, employee_name, grade, custom_is_operation,
+               company, designation, branch, leave_approver, image
+        FROM `tabEmployee`
+        WHERE user_id = %(user)s AND status = 'Active'
+        ORDER BY name LIMIT 2
+    """
+    if action == "checkin":
+        employee_query = employee_query + " FOR UPDATE"
+    employees = frappe.db.sql(employee_query, {"user": user}, as_dict=True)
+    if len(employees) != 1:
+        frappe.throw("Exactly one active Employee must be linked to your login")
+    employee = employees[0]
+    employee_id = employee.name
+    requested_employee = (frappe.form_dict.get("employee_id") or "").strip()
+    if requested_employee and requested_employee != employee_id:
+        frappe.throw("You can only mark your own attendance")
+    requested_user = (frappe.form_dict.get("user_id") or "").strip()
+    if requested_user and requested_user != user:
+        frappe.throw("You can only access your own attendance")
 
-office_type = (frappe.form_dict.get("office_type") or "").strip()
-office_types = (
-    "Head Office - Alapakkam",
-    "Head Office - RWD GrandCorridor",
-    "Head Office - Vanagaram",
-    "Head Office - Prestige",
-)
-office_config = {
-    "Head Office - Alapakkam": {
-        "latitude": 13.0431622,
-        "longitude": 80.1609604,
-        "radius_meters": 100,
-    },
-    "Head Office - RWD GrandCorridor": {
-        "latitude": 13.0570,
-        "longitude": 80.1371,
-        "radius_meters": 100,
-    },
-    "Head Office - Vanagaram": {
-        "latitude": 13.0549854,
-        "longitude": 80.1545772,
-        "radius_meters": 100,
-    },
-    "Head Office - Prestige": {
-        "latitude": 13.0604,
-        "longitude": 80.15483,
-        "radius_meters": 100,
-    }
-}
-
-# Preserve the app's existing spelling while accepting the page's spelling.
-if office_type == "Head Office - Aalapakkam":
-    office_type = "Head Office - Alapakkam"
-
-latitude = None
-longitude = None
-address = frappe.form_dict.get("address")
-address = address.strip()[:140] if isinstance(address, str) and address.strip() else "Farmgenie Mobile"
-
-if action in ("check_in", "check_out"):
-    latitude_text = frappe.form_dict.get("latitude")
-    longitude_text = frappe.form_dict.get("longitude")
-
-    if latitude_text in (None, "") or longitude_text in (None, ""):
-        frappe.throw("Latitude and longitude are required for location verification.")
-
-    try:
-        latitude = float(latitude_text)
-        longitude = float(longitude_text)
-    except (ValueError, TypeError):
-        frappe.throw("Latitude and longitude must be valid numbers.")
-
-    if not -90 <= latitude <= 90:
-        frappe.throw("Latitude must be between -90 and 90.")
-    if not -180 <= longitude <= 180:
-        frappe.throw("Longitude must be between -180 and 180.")
-
-user = frappe.session.user
-
-if not user or user == "Guest":
-    frappe.throw("Login is required.")
-
-# Only Employee.user_id links a login to an Employee. Email fallbacks could
-# resolve to a different person when emails are reused or mistyped.
-employees = frappe.get_all(
-    "Employee",
-    filters={"user_id": user, "status": "Active"},
-    fields=["name", "employee_name", "company", "status", "department", "designation", "branch", "leave_approver", "image"],
-    limit_page_length=2,
-)
-
-if len(employees) != 1:
-    frappe.throw(
-        "No single active Employee record matches the logged-in user. "
-        "Set Employee.user_id to the ERP login. Contact HR."
-    )
-employee = employees[0]
-
-# Only the authenticated Employee record can grant an exemption.
-# Missing custom field defaults to normal geofence enforcement.
-is_operation = False
-if frappe.get_meta("Employee").has_field("custom_is_operation"):
-    is_operation = frappe.utils.cint(
-        frappe.db.get_value("Employee", employee.name, "custom_is_operation")
-    ) == 1
-
-# Serialize check-in/check-out per employee. Two concurrent requests must not
-# both see "not checked in" and insert duplicate logs.
-if action in ("check_in", "check_out"):
-    frappe.db.get_value("Employee", employee.name, "name", for_update=True)
-
-now = frappe.utils.now_datetime()
-today = frappe.utils.getdate(now)
-tomorrow = frappe.utils.add_days(today, 1)
-today_start = frappe.utils.get_datetime(str(today) + " 00:00:00")
-tomorrow_start = frappe.utils.get_datetime(str(tomorrow) + " 00:00:00")
-# An IN older than this is a forgotten check-out, not an active shift.
-max_shift_hours = 20
-
-log_fields = ["name", "log_type", "time", "latitude", "longitude", "custom_latitude", "custom_longitude", "custom_office_type"]
-logs = frappe.get_all(
-    "Employee Checkin",
-    filters={
-        "employee": employee.name,
-        "time": ["between", [today_start, tomorrow_start]],
-    },
-    # custom_office_type exists only on Employee Checkin. It is used for the
-    # active check-in/check-out flow and is never queried from Attendance.
-    fields=log_fields,
-    order_by="time desc, creation desc",
-    limit_page_length=2,
-)
-# The open shift may have started before midnight (night shift).
-latest_rows = frappe.get_all(
-    "Employee Checkin",
-    filters={"employee": employee.name},
-    fields=log_fields,
-    order_by="time desc, creation desc",
-    limit_page_length=1,
-)
-
-if action == "calendar":
-    start_date = frappe.form_dict.get("start_date") or str(today)
-    end_date = frappe.form_dict.get("end_date") or str(tomorrow)
-    attendance_rows = frappe.get_all(
-        "Attendance",
-        filters={
-            "employee": employee.name,
-            "attendance_date": [
-                "between",
-                [
-                    frappe.utils.getdate(start_date),
-                    frappe.utils.add_days(frappe.utils.getdate(end_date), -1),
-                ],
-            ],
-            "docstatus": ["<", 2],
-        },
-        fields=[
-            "attendance_date",
-            "status",
-            "late_entry",
-            "early_exit",
-        ],
-        order_by="attendance_date asc, creation asc",
-        limit_page_length=500,
-    )
-
-    daily = {}
-    for attendance in attendance_rows:
-        raw_status = (attendance.status or "").strip().lower()
-        if "leave" in raw_status:
-            status = "leave"
-        elif raw_status == "half day":
-            status = "half"
-        elif raw_status == "present":
-            status = "present"
-        elif raw_status == "absent":
-            status = "absent"
+    is_labour = (employee.grade or "").strip().lower() == "labour"
+    is_operation = frappe.utils.cint(employee.custom_is_operation) == 1
+    now = frappe.utils.now_datetime()
+    day = str(frappe.utils.getdate(now))
+    midnight = frappe.utils.get_datetime(day + " 00:00:00")
+    next_midnight = frappe.utils.add_days(midnight, 1)
+    values = {"employee": employee_id, "midnight": midnight, "next_midnight": next_midnight}
+    lock_suffix = " FOR UPDATE" if action == "checkin" else ""
+    previous_rows = frappe.db.sql("""
+        SELECT name, log_type, time FROM `tabEmployee Checkin`
+        WHERE employee = %(employee)s AND time < %(midnight)s
+        ORDER BY time DESC, creation DESC, name DESC LIMIT 1
+    """ + lock_suffix, values, as_dict=True)
+    today_logs = frappe.db.sql("""
+        SELECT name, log_type, time FROM `tabEmployee Checkin`
+        WHERE employee = %(employee)s AND time >= %(midnight)s AND time < %(next_midnight)s
+        ORDER BY time ASC, creation ASC, name ASC
+    """ + lock_suffix, values, as_dict=True)
+    # A future-dated record must not become invisible to validation.
+    future_rows = frappe.db.sql("""
+        SELECT name FROM `tabEmployee Checkin`
+        WHERE employee = %(employee)s AND time >= %(next_midnight)s LIMIT 1
+    """ + lock_suffix, values, as_dict=True)
+    if future_rows:
+        frappe.throw("Future attendance record found. Ask HR to correct it")
+    previous = previous_rows[0] if previous_rows else None
+    latest = today_logs[-1] if today_logs else previous
+    latest_id = latest.name if latest else ""
+    open_log = previous if previous and previous.log_type == "IN" else None
+    completed = False
+    for row in today_logs:
+        if frappe.utils.get_datetime(row.time) > now:
+            frappe.throw("Future attendance record found. Ask HR to correct it")
+        if row.log_type == "IN":
+            if open_log:
+                frappe.throw("Two IN records without OUT. Ask HR to correct attendance")
+            open_log = row
+        elif row.log_type == "OUT":
+            if not open_log:
+                frappe.throw("OUT without a matching IN. Ask HR to correct attendance")
+            open_log = None
+            completed = True
         else:
-            status = raw_status.replace(" ", "_") or None
+            frappe.throw("A punch has no IN/OUT type. Ask HR to correct attendance")
+    if open_log and (now - frappe.utils.get_datetime(open_log.time)).total_seconds() > 86400:
+        frappe.throw("An old check-in is still open. Ask HR to correct it")
 
-        date_key = str(frappe.utils.getdate(attendance.attendance_date))
-        daily[date_key] = {
-            "date": date_key,
-            "attendance_date": date_key,
-            "status": status,
-            "half_day": status == "half",
-            "late_entry": attendance.late_entry,
-            "early_exit": attendance.early_exit,
+    next_action = "OUT" if open_log else ("IN" if is_labour or not completed else None)
+    if action == "status":
+        frappe.response["message"] = {
+            "status": "success", "employee": employee, "csrf_token": frappe.session.csrf_token,
+            "is_labour": is_labour, "is_operation": is_operation,
+            "geofence_radius_meters": geofence_radius_meters,
+            "previous": previous, "today_logs": today_logs,
+            "latest_checkin_id": latest_id, "next_action": next_action,
+            "server_now": str(now), "midnight": str(midnight), "work_date": day
         }
+    else:
+        log_type = (frappe.form_dict.get("log_type") or "").strip().upper()
+        if log_type not in ["IN", "OUT"]:
+            frappe.throw("Invalid log type")
+        # Optimistic token + employee row lock stop duplicate/stale submissions.
+        # Retrying a request with the same token cannot create another punch.
+        if "expected_last_checkin" not in frappe.form_dict:
+            frappe.throw("Please reload the updated attendance page")
+        expected = frappe.form_dict.get("expected_last_checkin") or ""
+        if expected != latest_id:
+            frappe.throw("Attendance changed. Refresh status before trying again")
+        if log_type != next_action:
+            if log_type == "IN" and completed and not is_labour and not open_log:
+                frappe.throw("Attendance completed. Only Grade Labour can check in again")
+            frappe.throw("Cannot check OUT without IN" if log_type == "OUT" else "Already checked IN")
 
-    records = []
-    for date_key in sorted(daily):
-        records.append(daily[date_key])
+        latitude = frappe.form_dict.get("latitude")
+        longitude = frappe.form_dict.get("longitude")
+        has_lat = latitude is not None and str(latitude).strip() != ""
+        has_lon = longitude is not None and str(longitude).strip() != ""
+        if has_lat != has_lon:
+            frappe.throw("Both latitude and longitude are required")
+        if not has_lat and not is_operation:
+            frappe.throw("Location not received. Please enable GPS")
+        if has_lat:
+            latitude = float(latitude)
+            longitude = float(longitude)
+            # Also rejects NaN and infinity.
+            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+                frappe.throw("Invalid GPS coordinates")
+        else:
+            latitude = None
+            longitude = None
 
-    frappe.response["message"] = {
-        "ok": True,
-        "data": records,
-    }
-
-latest = latest_rows[0] if latest_rows else None
-last_in = None
-last_out = None
-
-for log in logs:
-    if not last_in and log.log_type == "IN":
-        last_in = log
-    if not last_out and log.log_type == "OUT":
-        last_out = log
-
-checked_in = bool(
-    latest and latest.log_type == "IN"
-    and frappe.utils.time_diff_in_hours(now, latest.time) <= max_shift_hours
-)
-if checked_in:
-    # Report the open shift's IN even when it started yesterday.
-    last_in = latest
-    last_out = None
-work_completed = bool(not checked_in and last_in and last_out)
-
-# Check-out remains bound to the office in the authenticated employee's IN log.
-if action == "check_out" and not checked_in:
-    frappe.throw("Employee is not checked in. Check-in is required before checkout.")
-
-if action == "check_out" and checked_in:
-    office_type = latest.custom_office_type or ""
-    if office_type == "Head Office - Aalapakkam":
-        office_type = "Head Office - Alapakkam"
-    # The shift started as Operation; a later flag change must not block checkout.
-    if office_type == "Operation":
-        is_operation = True
-
-if action in ("check_in", "check_out"):
-    if not is_operation and office_type not in office_config:
-        frappe.throw("Your office location is missing or not configured. Contact HR.")
-    if is_operation and action == "check_in":
-        office_type = "Operation"
-    if not is_operation:
-        configured = office_config[office_type]
-        # Exact spherical distance using MariaDB math, available through safe SQL.
-        # Bound parameters only; no user input is interpolated into SQL.
-        distance_rows = frappe.db.sql(
-            """SELECT 6371000 * 2 * ASIN(SQRT(LEAST(1, GREATEST(0,
-                POW(SIN(RADIANS(%s - %s) / 2), 2)
-                + COS(RADIANS(%s)) * COS(RADIANS(%s))
-                * POW(SIN(RADIANS(%s - %s) / 2), 2)
-            ))))""",
-            (latitude, configured["latitude"], configured["latitude"],
-             latitude, longitude, configured["longitude"]),
-        )
-        distance_meters = distance_rows[0][0]
-        if distance_meters is None or distance_meters > configured["radius_meters"]:
-            frappe.throw(
-                "Move within 100 meters of " + office_type
-                + " to check " + ("in." if action == "check_in" else "out.")
-            )
-
-if action == "status":
-    frappe.response["message"] = {
-        "ok": True,
-        "data": {
-            "is_operation": is_operation,
-            "employee": employee.name,
-            "employee_id": employee.name,
-            "employee_name": employee.employee_name,
-            "company": employee.company,
-            "branch": employee.branch,
-            "leave_approver": employee.leave_approver,
-            "checked_in": checked_in,
-            "work_completed": work_completed,
-            "department": employee.department,
-            "designation": employee.designation,
-            "image": employee.image,
-            "office_type": last_in.custom_office_type if last_in else None,
-            "check_in_time": last_in.time if last_in else None,
-            "check_out_time": last_out.time if last_out else None,
-        },
-    }
-
-if action == "check_in":
-    if work_completed:
-        frappe.throw("Work for today is already completed. You cannot check in again today.")
-    if checked_in:
-        frappe.throw("Employee is already checked in. Check out before checking in again.")
-
-    checkin = frappe.get_doc(
-        {
-            "doctype": "Employee Checkin",
-            "employee": employee.name,
-            "employee_name": employee.employee_name,
-            "log_type": "IN",
-            "time": now,
-            "latitude": latitude,
-            "longitude": longitude,
-            "device_id": address,
-            "custom_latitude": latitude,
-            "custom_longitude": longitude,
-            "custom_office_type": office_type,
+        office = (frappe.form_dict.get("custom_office_type") or "").strip()
+        offices = {
+            "Head Office - Vanagaram": [13.0549854, 80.1545772],
+            "Head Office - Aalapakkam": [13.0431622, 80.1609604],
+            "Head Office - RWD GrandCorridor": [13.0570, 80.1371],
+            "Head Office - Prestige": [13.0604, 80.15483]
         }
-    )
-    checkin.insert()
+        if office not in offices and not (is_operation and office == "Operation"):
+            frappe.throw("Please select a valid office")
+        if not is_operation:
+            # Haversine, evaluated by MariaDB to avoid imports in Server Script.
+            center = offices[office]
+            distances = frappe.db.sql("""
+                SELECT 6371000 * 2 * ASIN(SQRT(LEAST(1,
+                    POW(SIN(RADIANS(%(lat)s - %(site_lat)s) / 2), 2)
+                    + COS(RADIANS(%(lat)s)) * COS(RADIANS(%(site_lat)s))
+                    * POW(SIN(RADIANS(%(lon)s - %(site_lon)s) / 2), 2)
+                ))) AS distance_m
+            """, {"lat": latitude, "lon": longitude, "site_lat": center[0], "site_lon": center[1]}, as_dict=True)
+            if float(distances[0].distance_m) > geofence_radius_meters:
+                frappe.throw("You must be within " + str(geofence_radius_meters) + " metres of the selected office")
 
-    frappe.response["message"] = {
-        "ok": True,
-        "message": "Employee checked in.",
-        "data": {
-            "is_operation": is_operation,
-            "employee": employee.name,
-            "employee_id": employee.name,
-            "employee_name": employee.employee_name,
-            "company": employee.company,
-            "branch": employee.branch,
-            "leave_approver": employee.leave_approver,
-            "checked_in": True,
-            "work_completed": False,
-            "department": employee.department,
-            "designation": employee.designation,
-            "image": employee.image,
-            "office_type": office_type,
-            "check_in_time": checkin.time,
-        },
-    }
+        # Restore the readable address. A failed lookup must not block attendance.
+        address = None
+        if latitude is not None and longitude is not None:
+            try:
+                geo_response = frappe.make_get_request(
+                    "https://nominatim.openstreetmap.org/reverse",
+                    params={
+                        "format": "json",
+                        "lat": latitude,
+                        "lon": longitude,
+                        "zoom": 18,
+                        "addressdetails": 1
+                    },
+                    headers={"User-Agent": "Farmgenie-ERPNext-Attendance"},
+                    timeout=5
+                )
+                address = (geo_response.get("display_name") or "").strip()
+            except Exception:
+                address = None
+        if not address:
+            address = "GPS unavailable" if latitude is None else "Lat " + str(latitude) + ", Lon " + str(longitude)
 
-if action == "check_out":
-    if not checked_in:
-        frappe.throw("Employee is not checked in. Check-in is required before checkout.")
-
-    checkout = frappe.get_doc(
-        {
-            "doctype": "Employee Checkin",
-            "employee": employee.name,
-            "employee_name": employee.employee_name,
-            "log_type": "OUT",
-            "time": now,
-            "latitude": latitude,
-            "longitude": longitude,
-            "device_id": address,
-            "custom_latitude": latitude,
-            "custom_longitude": longitude,
-            "custom_office_type": office_type,
+        # Respect the existing field's capacity; return the full address below.
+        device_address = address
+        device_field = frappe.get_meta("Employee Checkin").get_field("device_id")
+        if device_field and device_field.fieldtype in ["Data", "Link", "Dynamic Link"]:
+            device_address = address[:frappe.utils.cint(device_field.length or 140)]
+        doc = frappe.get_doc({
+            "doctype": "Employee Checkin", "employee": employee_id,
+            "log_type": log_type, "time": str(now),
+            "custom_latitude": latitude, "custom_longitude": longitude,
+            "custom_office_type": office, "device_id": device_address,
+            "custom_created_using_mobile_app": 1
+        })
+        doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        frappe.response["message"] = {
+            "status": "success", "checkin_id": doc.name,
+            "log_type": log_type, "time": str(now), "is_labour": is_labour,
+            "address": address
         }
-    )
-    checkout.insert()
+except Exception as e:
+    # Exceptions are caught for a consistent JSON response: explicitly roll back.
+    frappe.db.rollback()
+    frappe.response["http_status_code"] = 400
+    frappe.response["message"] = {"status": "error", "message": str(e)}
 
-    frappe.response["message"] = {
-        "ok": True,
-        "message": "Employee checked out.",
-        "data": {
-            "is_operation": is_operation,
-            "employee": employee.name,
-            "employee_id": employee.name,
-            "employee_name": employee.employee_name,
-            "company": employee.company,
-            "branch": employee.branch,
-            "leave_approver": employee.leave_approver,
-            "checked_in": False,
-            "work_completed": True,
-            "department": employee.department,
-            "designation": employee.designation,
-            "image": employee.image,
-            "office_type": office_type,
-            "check_in_time": latest.time,
-            "check_out_time": checkout.time,
-        },
-    }
+# #mobile_checkin

@@ -50,6 +50,7 @@ class FaceAuthFlow {
     FaceTemplateCache? cache,
     Future<List<double>> Function(File)? embed,
     Future<List<double>> Function(File)? captureEmbed,
+    Future<void> Function(File)? validateEnrollment,
     Future<void> Function()? warmUp,
     FaceCapture? capture,
   }) : api = api ?? FaceAuthApi.instance,
@@ -59,6 +60,13 @@ class FaceAuthFlow {
            captureEmbed ??
            embed ??
            FaceEmbeddingService.instance.embeddingFromCapture,
+       _validateEnrollment =
+           validateEnrollment ??
+           (captureEmbed != null
+               ? (file) async => captureEmbed(file)
+               : embed != null
+               ? (file) async => embed(file)
+               : FaceEmbeddingService.instance.validateCapture),
        _warmUp =
            warmUp ??
            (embed == null ? FaceEmbeddingService.instance.warmUp : _noWarmUp),
@@ -69,6 +77,7 @@ class FaceAuthFlow {
   final FaceTemplateCache _cache;
   final Future<List<double>> Function(File) _embed;
   final Future<List<double>> Function(File) _captureEmbed;
+  final Future<void> Function(File) _validateEnrollment;
   final Future<void> Function() _warmUp;
   final FaceCapture _capture;
   final _templateLoads = <String, Future<List<double>>>{};
@@ -138,12 +147,11 @@ class FaceAuthFlow {
     FaceEnrollmentStatus status,
   ) async {
     if (status.enrolled) return status;
-    _warmUp().ignore();
     final photo = await _capture(context, 'Set up your attendance selfie', (
       photo,
     ) async {
       try {
-        await _captureEmbed(photo);
+        await _validateEnrollment(photo);
         return null;
       } catch (error) {
         return error.toString();

@@ -44,6 +44,13 @@ class FaceEmbeddingService {
   Future<List<double>> embeddingFromCapture(File file) =>
       _embedding(file, validateCapture: true);
 
+  Future<void> validateCapture(File file) => _serialized(() async {
+    if (_disposed) {
+      throw StateError('The face recognition service has been disposed.');
+    }
+    await _captureTensor(file, validateCapture: true);
+  });
+
   /// Warm the cached model while the user is opening Attendance or blinking.
   Future<void> warmUp() => _serialized(() async {
     if (_disposed) {
@@ -57,21 +64,59 @@ class FaceEmbeddingService {
       enableClassification: true,
       enableLandmarks: true,
       performanceMode: FaceDetectorMode.accurate,
-      minFaceSize: 0.15,
+      minFaceSize: 0.20,
     ),
   );
 
-  Future<List<double>> _embedding(
+  Future<List<double>> _embedding(File file, {required bool validateCapture}) =>
+      _serialized(() async {
+        if (_disposed) {
+          throw StateError('The face recognition service has been disposed.');
+        }
+        final tensorData = await _captureTensor(
+          file,
+          validateCapture: validateCapture,
+        );
+        final session = await _timing.measure('model preparation', _session);
+        OrtValue? input;
+        Map<String, OrtValue> outputs = {};
+        try {
+          input = await OrtValue.fromList(tensorData, [1, 3, 112, 112]);
+          outputs = await _timing.measure(
+            'face model inference',
+            () => session.run({'data': input!}),
+          );
+          final output = outputs['fc1'];
+          if (output == null) {
+            throw const FaceEmbeddingException(
+              'The face recognition model returned no result.',
+            );
+          }
+          final flattened = await output.asFlattenedList();
+          final values = flattened
+              .map((value) => (value as num).toDouble())
+              .toList();
+          if (values.length != embeddingDimensions) {
+            throw const FaceEmbeddingException(
+              'The face recognition model returned an unexpected result.',
+            );
+          }
+          return FaceAlignment.normalizeEmbedding(values);
+        } finally {
+          try {
+            if (input != null) await input.dispose();
+          } finally {
+            for (final output in outputs.values) {
+              await output.dispose();
+            }
+          }
+        }
+      });
+
+  Future<Float32List> _captureTensor(
     File file, {
     required bool validateCapture,
-  }) => _serialized(() async {
-    if (_disposed) {
-      throw StateError('The face recognition service has been disposed.');
-    }
-    // Model loading and image preparation are independent. Observe errors even
-    // if photo validation fails before this operation reaches inference.
-    final sessionFuture = _session();
-    sessionFuture.ignore();
+  }) async {
     final bytes = await file.readAsBytes();
     final prepared = await _timing.measure(
       'photo preparation',
@@ -111,7 +156,7 @@ class FaceEmbeddingService {
         validateCapture: validateCapture,
       );
       final landmarks = _faceLandmarks(face);
-      final tensorData = await _timing.measure(
+      return await _timing.measure(
         'alignment and quality',
         () => compute(
           _alignedTensor,
@@ -123,42 +168,6 @@ class FaceEmbeddingService {
           ),
         ),
       );
-      final session = await sessionFuture;
-      OrtValue? input;
-      Map<String, OrtValue> outputs = {};
-      try {
-        input = await OrtValue.fromList(tensorData, [1, 3, 112, 112]);
-        // Android's plugin executes this call on a native background task
-        // queue; expensive Dart decoding/alignment ran in compute above.
-        outputs = await _timing.measure(
-          'face model inference',
-          () => session.run({'data': input!}),
-        );
-        final output = outputs['fc1'];
-        if (output == null) {
-          throw const FaceEmbeddingException(
-            'The face recognition model returned no result.',
-          );
-        }
-        final flattened = await output.asFlattenedList();
-        final values = flattened
-            .map((value) => (value as num).toDouble())
-            .toList();
-        if (values.length != embeddingDimensions) {
-          throw const FaceEmbeddingException(
-            'The face recognition model returned an unexpected result.',
-          );
-        }
-        return FaceAlignment.normalizeEmbedding(values);
-      } finally {
-        try {
-          if (input != null) await input.dispose();
-        } finally {
-          for (final output in outputs.values) {
-            await output.dispose();
-          }
-        }
-      }
     } finally {
       // The detector is reused within the serialized service, and closed by
       // clear/dispose. This directory belongs only to the current operation.
@@ -166,7 +175,7 @@ class FaceEmbeddingService {
         await temporaryDirectory.delete(recursive: true);
       }
     }
-  });
+  }
 
   static double cosineSimilarity(List<double> first, List<double> second) =>
       FaceAlignment.cosineSimilarity(first, second);

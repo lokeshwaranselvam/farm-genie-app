@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import 'employee_avatar.dart';
+
 const forestGreen = Color(0xFF17633A);
 const sidebarGreen = Color(0xFF0F4A2C);
 const sidebarSelected = Color(0xFF1F7A48);
 const homeSecondary = Color(0xFF5B6B62);
 const homeInk = Color(0xFF17251C);
-const pageBackground = Color(0xFFF4F7F3);
+const pageBackground = Colors.white;
 const cardBorder = Color(0xFFE2EAE3);
 const iconTint = Color(0xFFE6F2E8);
 
@@ -68,15 +70,22 @@ class FarmgenieIconTile extends StatelessWidget {
   final double size;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: size,
-    height: size,
-    decoration: BoxDecoration(
-      color: background,
-      borderRadius: BorderRadius.circular(size * .27),
-    ),
-    child: Icon(icon, color: color, size: size * .56),
-  );
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: background == iconTint ? colors.primaryContainer : background,
+        borderRadius: BorderRadius.circular(size * .27),
+      ),
+      child: Icon(
+        icon,
+        color: color == forestGreen ? colors.primary : color,
+        size: size * .56,
+      ),
+    );
+  }
 }
 
 class FarmgenieHomeEntrance extends StatelessWidget {
@@ -113,10 +122,11 @@ class BotanicalBackground extends StatelessWidget {
 
 /// Reuses the original mark; the crop only lays out the existing brand horizontally.
 class FarmgenieHomeWordmark extends StatelessWidget {
-  const FarmgenieHomeWordmark({super.key, this.light = false});
+  const FarmgenieHomeWordmark({super.key, this.light = false, this.scale = 1});
 
   /// White text for the dark-green navigation drawer.
   final bool light;
+  final double scale;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -128,24 +138,24 @@ class FarmgenieHomeWordmark extends StatelessWidget {
         children: [
           ClipRect(
             child: SizedBox(
-              width: 34,
-              height: 34,
+              width: 34 * scale,
+              height: 34 * scale,
               child: OverflowBox(
                 alignment: Alignment.topCenter,
-                minWidth: 67,
-                maxWidth: 67,
-                minHeight: 54,
-                maxHeight: 54,
+                minWidth: 67 * scale,
+                maxWidth: 67 * scale,
+                minHeight: 54 * scale,
+                maxHeight: 54 * scale,
                 child: Image.asset(
                   'logo-display.png',
-                  width: 67,
-                  height: 54,
+                  width: 67 * scale,
+                  height: 54 * scale,
                   fit: BoxFit.fill,
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 6),
+          SizedBox(width: 6 * scale),
           Flexible(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -157,7 +167,7 @@ class FarmgenieHomeWordmark extends StatelessWidget {
                   style: TextStyle(
                     color: light ? Colors.white : forestGreen,
                     fontWeight: FontWeight.w900,
-                    fontSize: 18,
+                    fontSize: 18 * scale,
                     letterSpacing: -.5,
                   ),
                 ),
@@ -168,7 +178,7 @@ class FarmgenieHomeWordmark extends StatelessWidget {
                     color: light
                         ? const Color(0xFFB7E4C7)
                         : const Color(0xFF64923C),
-                    fontSize: 8.5,
+                    fontSize: 8.5 * scale,
                   ),
                 ),
               ],
@@ -186,9 +196,13 @@ class FarmgenieGreetingCard extends StatelessWidget {
     super.key,
     required this.name,
     required this.checkedIn,
+    this.employeeId = '',
+    this.image,
   });
   final String name;
   final bool checkedIn;
+  final String employeeId;
+  final String? image;
   @override
   Widget build(BuildContext context) {
     final hour = DateTime.now().hour;
@@ -199,38 +213,59 @@ class FarmgenieGreetingCard extends StatelessWidget {
         : 'Good evening';
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(
-            greeting,
-            style: const TextStyle(
-              color: forestGreen,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            name,
-            style: const TextStyle(
-              color: homeInk,
-              fontSize: 26,
-              height: 1.15,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -.5,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            checkedIn
-                ? 'You are checked in. Have a productive day!'
-                : 'Your attendance and daily work at a glance.',
-            style: const TextStyle(
-              color: homeSecondary,
-              fontSize: 14,
-              height: 1.35,
+          EmployeeAvatar(name: name, image: image, radius: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  greeting,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  name,
+                  style: const TextStyle(
+                    color: homeInk,
+                    fontSize: 26,
+                    height: 1.15,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -.5,
+                  ),
+                ),
+                if (employeeId.trim().isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    employeeId,
+                    style: const TextStyle(
+                      color: homeSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: .2,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 4),
+                Text(
+                  checkedIn
+                      ? 'You are checked in. Have a productive day!'
+                      : 'Your attendance and daily work at a glance.',
+                  style: const TextStyle(
+                    color: homeSecondary,
+                    fontSize: 14,
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -433,7 +468,7 @@ class FarmgenieAttendanceActionButton extends StatelessWidget {
           ? const Color(0xFF6E9A7E)
           : checkout
           ? const Color(0xFFC2412D)
-          : forestGreen,
+          : Theme.of(context).colorScheme.primary,
       child: SizedBox(
         width: double.infinity,
         height: 54,
@@ -699,8 +734,8 @@ class FarmgenieLocationCard extends StatelessWidget {
           tooltip: 'Refresh location',
           onPressed: onRefresh,
           style: IconButton.styleFrom(
-            backgroundColor: iconTint,
-            foregroundColor: forestGreen,
+            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+            foregroundColor: Theme.of(context).colorScheme.primary,
             minimumSize: const Size(40, 40),
           ),
           icon: loading
@@ -725,7 +760,9 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
   @override
-  Widget build(BuildContext context) => SafeArea(
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return SafeArea(
     top: false,
     minimum: const EdgeInsets.fromLTRB(15, 10, 15, 10),
     child: FarmgenieGlassCard(
@@ -754,7 +791,7 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(16),
                             color: i == selectedIndex
-                                ? iconTint
+                                ? colors.primaryContainer
                                 : Colors.transparent,
                           ),
                           child: Icon(
@@ -766,7 +803,7 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
                             ][i],
                             size: 24,
                             color: i == selectedIndex
-                                ? forestGreen
+                                ? colors.primary
                                 : const Color(0xFF66736C),
                           ),
                         ),
@@ -785,7 +822,7 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 10.5,
                                 color: i == selectedIndex
-                                    ? forestGreen
+                                    ? colors.primary
                                     : const Color(0xFF66736C),
                                 fontWeight: i == selectedIndex
                                     ? FontWeight.w800
@@ -804,4 +841,5 @@ class FarmgenieGlassBottomNavigation extends StatelessWidget {
       ),
     ),
   );
+  }
 }
